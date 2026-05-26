@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Node / TypeScript
+node_modules/
+dist/
+.pnpm-store/
+coverage/
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
