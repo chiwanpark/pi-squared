@@ -28,7 +28,8 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.75.5",
     "@earendil-works/pi-ai": "^0.75.5",
-    "@earendil-works/pi-tui": "^0.75.5"
+    "@earendil-works/pi-tui": "^0.75.5",
+    "@tsports/go-osc52": "2.0.14-tsport"
   },
   "devDependencies": {
     "@types/node": "24.12.4",

@@ -7,6 +7,12 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 
+export interface ScreenPanel {
+  render(width: number): string[];
+  handleInput(data: string): void;
+  invalidate(): void;
+}
+
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 import { isAssistantError, messageRole, messageToText } from "../runtime/messages.js";
@@ -19,6 +25,13 @@ export interface ChatScreenOptions {
 
 export class ChatScreen implements Component {
   readonly editor: Editor;
+  private panel: ScreenPanel | null = null;
+
+  private readonly panelProxy: Component = {
+    render: () => [],
+    handleInput: (data) => this.panel?.handleInput(data),
+    invalidate: () => this.panel?.invalidate(),
+  };
 
   constructor(
     private readonly tui: TUI,
@@ -27,6 +40,12 @@ export class ChatScreen implements Component {
   ) {
     this.editor = new Editor(tui, { ...editorTheme }, { paddingX: 1 });
     this.editor.onSubmit = (text) => options.onSubmit(text);
+  }
+
+  setPanel(panel: ScreenPanel | null): void {
+    this.panel = panel;
+    this.tui.setFocus(panel ? this.panelProxy : this.editor);
+    this.tui.requestRender(true);
   }
 
   render(width: number): string[] {
@@ -42,13 +61,16 @@ export class ChatScreen implements Component {
     const help = this.renderHelp(safeWidth);
     const messageLines = this.renderMessages(safeWidth);
     const errorLines = snapshot.lastError ? wrapWithPrefix(style.red("error: "), snapshot.lastError, safeWidth) : [];
+    const noticeLines = this.renderNotice(safeWidth);
+    const panelLines = this.panel ? this.panel.render(safeWidth) : [];
 
-    const reservedRows = header.length + help.length + editorLines.length + errorLines.length;
+    const reservedRows =
+      header.length + help.length + editorLines.length + errorLines.length + noticeLines.length + panelLines.length;
     const availableMessageRows = Math.max(1, this.tui.terminal.rows - reservedRows);
     const visibleMessages = messageLines.slice(-availableMessageRows);
 
-    return [...header, ...visibleMessages, ...errorLines, ...help, ...editorLines].map((line) =>
-      truncateToWidth(line, safeWidth, ""),
+    return [...header, ...visibleMessages, ...noticeLines, ...errorLines, ...help, ...panelLines, ...editorLines].map(
+      (line) => truncateToWidth(line, safeWidth, ""),
     );
   }
 
@@ -63,8 +85,9 @@ export class ChatScreen implements Component {
   private renderHeader(width: number): string[] {
     const snapshot = this.runtime.status.getSnapshot();
     const model = `${snapshot.model.provider}/${snapshot.model.id}`;
+    const thinking = snapshot.thinkingLevel === "off" ? "" : ` · thinking ${snapshot.thinkingLevel}`;
     const phase = formatPhase(snapshot.phase);
-    const title = `${style.bold("pi-squared")} ${style.gray("·")} ${style.dim(model)} ${style.gray("·")} ${phase}`;
+    const title = `${style.bold("pi-squared")} ${style.gray("·")} ${style.dim(model + thinking)} ${style.gray("·")} ${phase}`;
     return [truncateToWidth(title, width, "")];
   }
 
@@ -72,9 +95,17 @@ export class ChatScreen implements Component {
     const snapshot = this.runtime.status.getSnapshot();
     const text =
       snapshot.phase === "idle"
-        ? "enter send • shift+enter newline • /quit exit • no tools enabled"
+        ? "enter send • shift+enter newline • / for commands • /help to list"
         : "responding… ctrl+c or esc aborts";
     return [truncateToWidth(style.gray(text), width, "")];
+  }
+
+  private renderNotice(width: number): string[] {
+    const snapshot = this.runtime.status.getSnapshot();
+    const notice = snapshot.lastNotice;
+    if (!notice) return [];
+    const color = notice.level === "error" ? style.red : notice.level === "warn" ? style.yellow : style.cyan;
+    return wrapWithPrefix(color(`${notice.level}: `), notice.message, width);
   }
 
   private renderMessages(width: number): string[] {

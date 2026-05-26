@@ -6,7 +6,10 @@ import {
   type KnownProvider,
   type Model,
 } from "@earendil-works/pi-ai";
+import { getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+
+import type { AuthStore } from "./auth-store.js";
 
 const PROVIDER_PREFERENCE: KnownProvider[] = [
   "anthropic",
@@ -38,6 +41,8 @@ const DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> = {
 export interface ResolveModelOptions {
   provider?: string;
   model?: string;
+  /** Optional auth store used to detect OAuth-backed providers. */
+  authStore?: AuthStore;
 }
 
 export interface ResolvedModel {
@@ -47,7 +52,38 @@ export interface ResolvedModel {
   apiKeyAvailable: boolean;
 }
 
-export function parseModelReference(options: ResolveModelOptions): Required<ResolveModelOptions> {
+export interface ProviderListEntry {
+  id: KnownProvider;
+  available: boolean;
+  via: "env" | "oauth" | "stored-key" | "none";
+  supportsOAuth: boolean;
+}
+
+export interface ApiKeyProviderEntry {
+  id: KnownProvider;
+  name: string;
+  hasKey: boolean;
+}
+
+export interface ModelListEntry {
+  id: string;
+  name: string;
+  provider: KnownProvider;
+  reasoning: boolean;
+}
+
+export interface OAuthProviderEntry {
+  id: string;
+  name: string;
+  loggedIn: boolean;
+}
+
+export interface ParsedModelReference {
+  provider: string;
+  model: string;
+}
+
+export function parseModelReference(options: ResolveModelOptions): ParsedModelReference {
   let provider = options.provider ?? "";
   let model = options.model ?? "";
 
@@ -63,7 +99,7 @@ export function parseModelReference(options: ResolveModelOptions): Required<Reso
 export function resolveModel(options: ResolveModelOptions): ResolvedModel {
   const parsed = parseModelReference(options);
   const providerWasInferred = parsed.provider.length === 0;
-  const provider = providerWasInferred ? inferProvider() : parsed.provider;
+  const provider = providerWasInferred ? inferProvider(options.authStore) : parsed.provider;
   const knownProvider = toKnownProvider(provider);
   const models = getModels(knownProvider);
   const modelWasInferred = parsed.model.length === 0;
@@ -75,7 +111,7 @@ export function resolveModel(options: ResolveModelOptions): ResolvedModel {
     model,
     providerWasInferred,
     modelWasInferred,
-    apiKeyAvailable: getEnvApiKey(model.provider) !== undefined,
+    apiKeyAvailable: isProviderCredentialed(model.provider, options.authStore),
   };
 }
 
@@ -89,7 +125,80 @@ export function listKnownProviders(): string[] {
   return [...getProviders()];
 }
 
-function inferProvider(): KnownProvider {
+export function listProvidersForSelection(authStore?: AuthStore): ProviderListEntry[] {
+  const oauthCreds = authStore?.getAllOAuth() ?? {};
+  const storedKeys = new Set(authStore?.listApiKeyProviderIds() ?? []);
+  const providers = getProviders();
+  const ordered = [
+    ...PROVIDER_PREFERENCE.filter((entry) => providers.includes(entry)),
+    ...providers.filter((entry) => !PROVIDER_PREFERENCE.includes(entry)),
+  ];
+  return ordered
+    .map((id) => {
+      const supportsOAuth = getOAuthProvider(id) !== undefined;
+      const hasOAuth = oauthCreds[id] !== undefined;
+      const hasStoredKey = storedKeys.has(id);
+      const hasEnv = getEnvApiKey(id) !== undefined;
+      const via: ProviderListEntry["via"] = hasOAuth ? "oauth" : hasStoredKey ? "stored-key" : hasEnv ? "env" : "none";
+      return { id, supportsOAuth, available: via !== "none", via };
+    })
+    .filter((entry) => entry.available);
+}
+
+export function listApiKeyProviders(authStore?: AuthStore): ApiKeyProviderEntry[] {
+  const storedKeys = new Set(authStore?.listApiKeyProviderIds() ?? []);
+  const providers = getProviders();
+  const ordered = [
+    ...PROVIDER_PREFERENCE.filter((entry) => providers.includes(entry)),
+    ...providers.filter((entry) => !PROVIDER_PREFERENCE.includes(entry)),
+  ];
+  return ordered.map((id) => ({ id, name: id, hasKey: storedKeys.has(id) }));
+}
+
+export function listModelsForProvider(provider: string): ModelListEntry[] {
+  const known = toKnownProvider(provider);
+  return getModels(known).map((model) => ({
+    id: model.id,
+    name: model.name,
+    provider: known,
+    reasoning: model.reasoning,
+  }));
+}
+
+export function listOAuthProviders(authStore?: AuthStore): OAuthProviderEntry[] {
+  const loggedIn = new Set(authStore?.listOAuthProviderIds() ?? []);
+  return getOAuthProviders().map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    loggedIn: loggedIn.has(provider.id),
+  }));
+}
+
+export function getDefaultModelForProvider(provider: string): Model<any> {
+  const known = toKnownProvider(provider);
+  return pickDefaultModel(known, getModels(known));
+}
+
+export function findModelByReference(provider: string, modelId: string): Model<any> {
+  const known = toKnownProvider(provider);
+  return findModel(known, getModels(known), modelId);
+}
+
+function isProviderCredentialed(provider: string, authStore?: AuthStore): boolean {
+  if (authStore && authStore.getOAuth(provider)) return true;
+  if (authStore && authStore.getApiKey(provider)) return true;
+  return getEnvApiKey(provider) !== undefined;
+}
+
+function inferProvider(authStore?: AuthStore): KnownProvider {
+  if (authStore) {
+    for (const provider of PROVIDER_PREFERENCE) {
+      if (authStore.getOAuth(provider)) return provider;
+    }
+    for (const provider of PROVIDER_PREFERENCE) {
+      if (authStore.getApiKey(provider)) return provider;
+    }
+  }
   for (const provider of PROVIDER_PREFERENCE) {
     if (getEnvApiKey(provider)) return provider;
   }

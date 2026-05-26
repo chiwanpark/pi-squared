@@ -9,6 +9,15 @@ export interface ModelStatus {
   name: string;
 }
 
+export type NoticeLevel = "info" | "warn" | "error";
+
+export interface AgentNotice {
+  level: NoticeLevel;
+  message: string;
+  /** Optional epoch ms at which the notice was raised. */
+  at: number;
+}
+
 export interface AgentStatusSnapshot {
   sessionId: string;
   phase: AgentPhase;
@@ -19,6 +28,7 @@ export interface AgentStatusSnapshot {
   streamingMessage: AgentMessage | undefined;
   pendingToolCallIds: string[];
   lastError: string | undefined;
+  lastNotice: AgentNotice | undefined;
   currentEvent: string | undefined;
   updatedAt: number;
 }
@@ -51,6 +61,7 @@ export function createInitialStatus(options: CreateStatusOptions): AgentStatusSn
     streamingMessage: undefined,
     pendingToolCallIds: [],
     lastError: undefined,
+    lastNotice: undefined,
     currentEvent: undefined,
     updatedAt: Date.now(),
   };
@@ -62,6 +73,7 @@ function cloneSnapshot(snapshot: AgentStatusSnapshot): AgentStatusSnapshot {
     model: { ...snapshot.model },
     messages: [...snapshot.messages],
     pendingToolCallIds: [...snapshot.pendingToolCallIds],
+    lastNotice: snapshot.lastNotice ? { ...snapshot.lastNotice } : undefined,
   };
 }
 

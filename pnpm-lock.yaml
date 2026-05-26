@@ -41,6 +41,9 @@ importers:
       '@earendil-works/pi-tui':
         specifier: ^0.75.5
         version: 0.75.5
+      '@tsports/go-osc52':
+        specifier: 2.0.14-tsport
+        version: 2.0.14-tsport
     devDependencies:
       '@types/node':
         specifier: 24.12.4
@@ -598,6 +601,10 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@tsports/go-osc52@2.0.14-tsport':
+    resolution: {integrity: sha512-S3k3MurZ7pZQDEpWHeV1uakuXNFssXyIP4N34EpGncB/208vRsziseHMEHz11+6Rl/JpIQXxToqBNHR5+iJFXQ==}
+    engines: {node: '>=18.0.0'}
 
   '@tybys/wasm-util@0.10.2':
     resolution: {integrity: sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg==}
@@ -1993,6 +2000,8 @@ snapshots:
       tslib: 2.8.1
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@tsports/go-osc52@2.0.14-tsport': {}
 
   '@tybys/wasm-util@0.10.2':
     dependencies:

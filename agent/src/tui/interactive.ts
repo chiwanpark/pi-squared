@@ -1,7 +1,8 @@
-import { Key, matchesKey, ProcessTerminal, TUI } from "@earendil-works/pi-tui";
+import { CombinedAutocompleteProvider, Key, matchesKey, ProcessTerminal, TUI } from "@earendil-works/pi-tui";
 
 import type { PiSquaredAgentRuntime } from "../runtime/pi-agent.js";
 import { ChatScreen } from "./chat-screen.js";
+import { buildRegistry, createCommands, type CommandContext } from "./commands.js";
 
 export interface InteractiveOptions {
   runtime: PiSquaredAgentRuntime;
@@ -30,15 +31,29 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
     }
     tui.stop();
     resolveDone();
+    process.exit(0);
   };
 
   const screen = new ChatScreen(tui, runtime, { onSubmit: (text) => submit(text) });
+  const registry = buildRegistry(createCommands(runtime.authStore));
+  const commandContext: CommandContext = {
+    tui,
+    screen,
+    runtime,
+    requestExit: () => {
+      void stop();
+    },
+  };
+
+  screen.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(registry.commands, process.cwd()));
 
   const submit = (text: string): void => {
     const trimmed = text.trim();
     if (trimmed.length === 0) return;
-    if (trimmed === "/quit" || trimmed === "/exit") {
-      void stop();
+
+    if (trimmed.startsWith("/")) {
+      screen.editor.addToHistory(trimmed);
+      void registry.execute(trimmed, commandContext);
       return;
     }
 

@@ -1,9 +1,11 @@
 import { Agent, type AgentEvent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { getEnvApiKey, type Model, type Transport } from "@earendil-works/pi-ai";
+import { getOAuthApiKey, getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { randomUUID } from "node:crypto";
 
+import { AuthStore } from "./auth-store.js";
 import { createUserMessage } from "./messages.js";
-import { AgentStatusStore, createInitialStatus, modelToStatus } from "./status-store.js";
+import { AgentStatusStore, createInitialStatus, modelToStatus, type NoticeLevel } from "./status-store.js";
 
 export interface PiSquaredAgentRuntimeOptions {
   model: Model<any>;
@@ -12,6 +14,7 @@ export interface PiSquaredAgentRuntimeOptions {
   thinkingLevel?: ThinkingLevel;
   transport?: Transport;
   sessionId?: string;
+  authStore?: AuthStore;
 }
 
 export const DEFAULT_SYSTEM_PROMPT = [
@@ -23,13 +26,15 @@ export const DEFAULT_SYSTEM_PROMPT = [
 export class PiSquaredAgentRuntime {
   readonly agent: Agent;
   readonly status: AgentStatusStore;
+  readonly authStore: AuthStore;
 
   private model: Model<any>;
   private apiKey: string | undefined;
   private readonly sessionId: string;
 
   constructor(options: PiSquaredAgentRuntimeOptions) {
-    this.model = options.model;
+    this.authStore = options.authStore ?? new AuthStore();
+    this.model = this.applyOAuthModelTransforms(options.model);
     this.apiKey = options.apiKey;
     this.sessionId = options.sessionId ?? randomUUID();
 
@@ -53,7 +58,7 @@ export class PiSquaredAgentRuntime {
         messages: [],
         tools: [],
       },
-      getApiKey: (provider) => this.apiKey ?? getEnvApiKey(provider),
+      getApiKey: (provider) => this.resolveApiKey(provider),
       sessionId: this.sessionId,
       transport: options.transport ?? "auto",
     });
@@ -121,12 +126,21 @@ export class PiSquaredAgentRuntime {
       throw new Error("Cannot replace the model while the agent is responding.");
     }
 
-    this.model = model;
-    this.agent.state.model = model;
+    const transformed = this.applyOAuthModelTransforms(model);
+    this.model = transformed;
+    this.agent.state.model = transformed;
     this.status.update((draft) => {
-      draft.model = modelToStatus(model);
+      draft.model = modelToStatus(transformed);
       draft.currentEvent = "model_replace";
     });
+  }
+
+  /**
+   * Re-apply OAuth model transformations (e.g. github-copilot baseUrl rewrite)
+   * after credentials change.
+   */
+  refreshModelFromAuth(): void {
+    this.setModel(this.model);
   }
 
   setApiKey(apiKey: string | undefined): void {
@@ -155,6 +169,61 @@ export class PiSquaredAgentRuntime {
       draft.lastError = error;
       draft.currentEvent = error ? "error" : draft.currentEvent;
     });
+  }
+
+  setNotice(message: string, level: NoticeLevel = "info"): void {
+    this.status.update((draft) => {
+      draft.lastNotice = { message, level, at: Date.now() };
+      draft.currentEvent = `notice_${level}`;
+    });
+  }
+
+  clearNotice(): void {
+    this.status.update((draft) => {
+      draft.lastNotice = undefined;
+    });
+  }
+
+  /**
+   * Resolve an API key for a provider, preferring OAuth credentials from the
+   * auth store (refreshing if expired), then the runtime override, then env.
+   */
+  async resolveApiKey(provider: string): Promise<string | undefined> {
+    await this.authStore.load();
+    const oauthProvider = getOAuthProvider(provider);
+    if (oauthProvider) {
+      const credentials = this.authStore.getAllOAuth();
+      if (credentials[provider]) {
+        try {
+          const result = await getOAuthApiKey(provider, credentials);
+          if (result) {
+            const stored = credentials[provider];
+            if (stored && stored.access !== result.newCredentials.access) {
+              await this.authStore.setOAuth(provider, result.newCredentials);
+            }
+            return result.apiKey;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.setNotice(`OAuth refresh failed for ${provider}: ${message}`, "error");
+        }
+      }
+    }
+    const storedKey = this.authStore.getApiKey(provider);
+    if (storedKey) return storedKey;
+    return this.apiKey ?? getEnvApiKey(provider);
+  }
+
+  /**
+   * Apply OAuth-driven model transformations (e.g. github-copilot baseUrl).
+   */
+  private applyOAuthModelTransforms(model: Model<any>): Model<any> {
+    const oauthProvider = getOAuthProvider(model.provider);
+    if (!oauthProvider?.modifyModels) return model;
+    const credentials = this.authStore.getOAuth(model.provider);
+    if (!credentials) return model;
+    const [transformed] = oauthProvider.modifyModels([model], credentials);
+    return transformed ?? model;
   }
 
   /**

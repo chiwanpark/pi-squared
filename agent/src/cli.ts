@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
+import { AuthStore } from "./runtime/auth-store.js";
 import { PiSquaredAgentRuntime, DEFAULT_SYSTEM_PROMPT } from "./runtime/pi-agent.js";
-import { listKnownProviders, normalizeThinkingLevel, resolveModel } from "./runtime/model-resolver.js";
+import { normalizeThinkingLevel, resolveModel } from "./runtime/model-resolver.js";
 import { runInteractive } from "./tui/interactive.js";
 
 const VERSION = "0.1.0";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 interface CliOptions {
-  provider?: string;
-  model?: string;
-  apiKey?: string;
   systemPrompt?: string;
   thinking: ThinkingLevel;
   help: boolean;
@@ -32,18 +30,17 @@ async function main(): Promise<void> {
     return;
   }
 
-  const modelOptions: Parameters<typeof resolveModel>[0] = {};
-  if (options.provider) modelOptions.provider = options.provider;
-  if (options.model) modelOptions.model = options.model;
+  const authStore = new AuthStore();
+  await authStore.load();
 
-  const resolved = resolveModel(modelOptions);
+  const resolved = resolveModel({ authStore });
   const thinkingLevel = normalizeThinkingLevel(resolved.model, options.thinking);
   const runtimeOptions: ConstructorParameters<typeof PiSquaredAgentRuntime>[0] = {
     model: resolved.model,
     thinkingLevel,
     systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    authStore,
   };
-  if (options.apiKey) runtimeOptions.apiKey = options.apiKey;
 
   const runtime = new PiSquaredAgentRuntime(runtimeOptions);
   const interactiveOptions: Parameters<typeof runInteractive>[0] = { runtime };
@@ -83,16 +80,6 @@ function parseArgs(argv: string[]): CliOptions {
       case "-v":
       case "--version":
         options.version = true;
-        break;
-      case "--provider":
-        options.provider = inlineValue ?? takeValue(argv, ++i, flag);
-        break;
-      case "-m":
-      case "--model":
-        options.model = inlineValue ?? takeValue(argv, ++i, flag);
-        break;
-      case "--api-key":
-        options.apiKey = inlineValue ?? takeValue(argv, ++i, flag);
         break;
       case "--system-prompt":
         options.systemPrompt = inlineValue ?? takeValue(argv, ++i, flag);
@@ -138,16 +125,18 @@ Usage:
   pi2 [options] [initial message]
 
 Options:
-  -m, --model <id|provider/id>     Model id. Defaults to the first configured provider.
-      --provider <provider>        Provider name. Known providers include: ${listKnownProviders().slice(0, 8).join(", ")}, ...
-      --api-key <key>              Runtime API key override.
       --thinking <level>           off|minimal|low|medium|high|xhigh (default: off)
       --system-prompt <text>       Override the default system prompt.
   -h, --help                       Show this help.
   -v, --version                    Show version.
 
-Environment API keys are read through @earendil-works/pi-ai, e.g. ANTHROPIC_API_KEY or OPENAI_API_KEY.
-Inside the TUI, type /quit to exit. This first version intentionally has no tools.`);
+The provider and model are selected automatically from available credentials:
+  - OAuth credentials stored in ~/.pi-squared/auth.json (override: PI_SQUARED_AUTH_FILE)
+  - Environment API keys, e.g. ANTHROPIC_API_KEY or OPENAI_API_KEY
+
+Inside the TUI, type / to open the command menu. Useful commands:
+  /model, /thinking, /login, /logout, /help, /quit
+`);
 }
 
 main().catch((error: unknown) => {
