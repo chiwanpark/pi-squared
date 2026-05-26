@@ -1,4 +1,4 @@
-export { PiSquaredAgentRuntime, DEFAULT_SYSTEM_PROMPT, type PiSquaredAgentRuntimeOptions } from "./runtime/pi-agent.js";
+export { PiSquaredAgentRuntime, type PiSquaredAgentRuntimeOptions } from "./runtime/pi-agent.js";
 export { createUserMessage, messageRole, messageToText, contentToText } from "./runtime/messages.js";
 export {
   AgentStatusStore,

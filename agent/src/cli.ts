@@ -2,7 +2,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import { AuthStore } from "./runtime/auth-store.js";
-import { PiSquaredAgentRuntime, DEFAULT_SYSTEM_PROMPT } from "./runtime/pi-agent.js";
+import { PiSquaredAgentRuntime } from "./runtime/pi-agent.js";
 import { normalizeThinkingLevel, resolveModel } from "./runtime/model-resolver.js";
 import { runInteractive } from "./tui/interactive.js";
 
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   const runtimeOptions: ConstructorParameters<typeof PiSquaredAgentRuntime>[0] = {
     model: resolved.model,
     thinkingLevel,
-    systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+    systemPrompt: options.systemPrompt,
     authStore,
   };
 

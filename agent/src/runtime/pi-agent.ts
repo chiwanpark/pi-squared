@@ -13,24 +13,23 @@ import { randomUUID } from "node:crypto";
 import { AuthStore } from "./auth-store.js";
 import { createUserMessage } from "./messages.js";
 import { AgentStatusStore, createInitialStatus, modelToStatus, type NoticeLevel } from "./status-store.js";
+import { buildSystemPrompt } from "./system-prompt.js";
 
 export interface PiSquaredAgentRuntimeOptions {
   model: Model<any>;
   apiKey?: string;
-  systemPrompt?: string;
+  systemPrompt?: string | undefined;
   thinkingLevel?: ThinkingLevel;
   transport?: Transport;
   sessionId?: string;
   authStore?: AuthStore;
   /** Working directory for tool execution. Defaults to process.cwd(). */
   cwd?: string;
+  /** Custom guidelines for the system prompt. */
+  guidelines?: string[] | undefined;
+  /** Extra context file paths (relative to cwd) to inject into the system prompt. */
+  extraContextFiles?: string[] | undefined;
 }
-
-export const DEFAULT_SYSTEM_PROMPT = [
-  "You are pi-squared, an interactive coding assistant running in a terminal.",
-  "Be concise, practical, and honest about limitations.",
-  "Use the bash tool to inspect files, run commands, and gather information.",
-].join("\n");
 
 export class PiSquaredAgentRuntime {
   readonly agent: Agent;
@@ -41,24 +40,31 @@ export class PiSquaredAgentRuntime {
   private apiKey: string | undefined;
   private readonly sessionId: string;
   private readonly tools: AgentTool<any>[];
+  private readonly cwd: string;
+  private readonly guidelines: string[] | undefined;
+  private readonly extraContextFiles: string[] | undefined;
+  private systemPromptOverride: string | undefined;
 
   constructor(options: PiSquaredAgentRuntimeOptions) {
     this.authStore = options.authStore ?? new AuthStore();
     this.model = this.applyOAuthModelTransforms(options.model);
     this.apiKey = options.apiKey;
     this.sessionId = options.sessionId ?? randomUUID();
-    const cwd = options.cwd ?? process.cwd();
-    this.tools = [createBashTool(cwd)];
+    this.cwd = options.cwd ?? process.cwd();
+    this.tools = [createBashTool(this.cwd)];
+    this.guidelines = options.guidelines;
+    this.extraContextFiles = options.extraContextFiles;
+    this.systemPromptOverride = options.systemPrompt;
 
     const thinkingLevel = options.thinkingLevel ?? "off";
-    const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    const initialSystemPrompt = this.systemPromptOverride ?? "";
 
     this.status = new AgentStatusStore(
       createInitialStatus({
         sessionId: this.sessionId,
         model: this.model,
         thinkingLevel,
-        systemPrompt,
+        systemPrompt: initialSystemPrompt,
       }),
     );
 
@@ -66,7 +72,7 @@ export class PiSquaredAgentRuntime {
       initialState: {
         model: this.model,
         thinkingLevel,
-        systemPrompt,
+        systemPrompt: initialSystemPrompt,
         messages: [],
         tools: [],
       },
@@ -97,7 +103,7 @@ export class PiSquaredAgentRuntime {
       );
     }
 
-    this.applyStatusToAgent();
+    await this.applyStatusToAgent();
     this.status.update((draft) => {
       draft.phase = "streaming";
       draft.lastError = undefined;
@@ -168,6 +174,7 @@ export class PiSquaredAgentRuntime {
   }
 
   setSystemPrompt(systemPrompt: string): void {
+    this.systemPromptOverride = systemPrompt;
     this.agent.state.systemPrompt = systemPrompt;
     this.status.update((draft) => {
       draft.systemPrompt = systemPrompt;
@@ -243,12 +250,25 @@ export class PiSquaredAgentRuntime {
    * A future HTTP server can update the status store, then call this method to
    * make the next turn use the modified transcript and prompt state.
    */
-  applyStatusToAgent(): void {
+  async applyStatusToAgent(): Promise<void> {
+    if (!this.systemPromptOverride) {
+      const dynamicPrompt = await buildSystemPrompt({
+        cwd: this.cwd,
+        guidelines: this.guidelines,
+        extraContextFiles: this.extraContextFiles,
+      });
+      this.agent.state.systemPrompt = dynamicPrompt;
+      this.status.update((draft) => {
+        draft.systemPrompt = dynamicPrompt;
+      });
+    } else {
+      this.agent.state.systemPrompt = this.systemPromptOverride;
+    }
+
     const snapshot = this.status.getSnapshot();
     this.agent.state.model = this.model;
     this.agent.state.messages = snapshot.messages;
     this.agent.state.thinkingLevel = snapshot.thinkingLevel;
-    this.agent.state.systemPrompt = snapshot.systemPrompt;
     this.agent.state.tools = [...this.tools];
   }
 
