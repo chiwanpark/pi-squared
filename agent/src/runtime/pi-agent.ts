@@ -38,7 +38,7 @@ export class PiSquaredAgentRuntime {
 
   private model: Model<any>;
   private apiKey: string | undefined;
-  private readonly sessionId: string;
+  private sessionId: string;
   private readonly tools: AgentTool<any>[];
   private readonly cwd: string;
   private readonly guidelines: string[] | undefined;
@@ -128,6 +128,33 @@ export class PiSquaredAgentRuntime {
 
   waitForIdle(): Promise<void> {
     return this.agent.waitForIdle();
+  }
+
+  newSession(): string {
+    if (this.isBusy) {
+      throw new Error("Cannot start a new session while the agent is responding.");
+    }
+
+    this.sessionId = randomUUID();
+    const snapshot = this.status.getSnapshot();
+    const systemPrompt = this.systemPromptOverride ?? snapshot.systemPrompt;
+
+    this.agent.reset();
+    this.agent.sessionId = this.sessionId;
+    this.agent.state.model = this.model;
+    this.agent.state.thinkingLevel = snapshot.thinkingLevel;
+    this.agent.state.systemPrompt = systemPrompt;
+
+    this.status.replace(
+      createInitialStatus({
+        sessionId: this.sessionId,
+        model: this.model,
+        thinkingLevel: snapshot.thinkingLevel,
+        systemPrompt,
+      }),
+    );
+
+    return this.sessionId;
   }
 
   setMessages(messages: AgentMessage[]): void {

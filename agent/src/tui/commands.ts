@@ -61,6 +61,7 @@ export function parseSlashCommand(text: string): ParsedCommand | null {
 export function createCommands(authStore?: AuthStore): CommandDefinition[] {
   return [
     helpCommand(),
+    newSessionCommand(),
     quitCommand("quit"),
     quitCommand("exit"),
     modelCommand(authStore),
@@ -105,6 +106,7 @@ function helpCommand(): CommandDefinition {
     async execute(_args, ctx) {
       const lines = [
         "/help                 show this help",
+        "/new                  clear chat and start a new session",
         "/quit, /exit          leave the chat",
         "/model [ref]          switch model (e.g. anthropic/claude-sonnet-4-5)",
         "/thinking [level]     off | minimal | low | medium | high | xhigh",
@@ -114,6 +116,17 @@ function helpCommand(): CommandDefinition {
         "Pass /command with no argument to open an interactive selector.",
       ];
       await showInfo(ctx.screen, { title: "Slash Commands", body: lines.join("\n") }).promise;
+    },
+  };
+}
+
+function newSessionCommand(): CommandDefinition {
+  return {
+    command: { name: "new", description: "Clear chat and start a new session" },
+    async execute(_args, ctx) {
+      ctx.runtime.newSession();
+      ctx.screen.editor.setText("");
+      ctx.runtime.setNotice("Started a new session.", "info");
     },
   };
 }
