@@ -1,4 +1,5 @@
 # AGENTS.md
+
 The rules any coding agents working on this project should follow. This repository contains several projects running "pi-squared", which is an interactive coding agent.
 
 ### Common Rules
