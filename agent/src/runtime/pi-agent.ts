@@ -1,6 +1,13 @@
-import { Agent, type AgentEvent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+  Agent,
+  type AgentEvent,
+  type AgentMessage,
+  type AgentTool,
+  type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import { getEnvApiKey, type Model, type Transport } from "@earendil-works/pi-ai";
 import { getOAuthApiKey, getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { createBashTool } from "../tools/bash/tool.js";
 import { randomUUID } from "node:crypto";
 
 import { AuthStore } from "./auth-store.js";
@@ -15,12 +22,14 @@ export interface PiSquaredAgentRuntimeOptions {
   transport?: Transport;
   sessionId?: string;
   authStore?: AuthStore;
+  /** Working directory for tool execution. Defaults to process.cwd(). */
+  cwd?: string;
 }
 
 export const DEFAULT_SYSTEM_PROMPT = [
   "You are pi-squared, an interactive coding assistant running in a terminal.",
   "Be concise, practical, and honest about limitations.",
-  "You do not have tools in this first implementation, so ask the user to paste relevant files or command output when needed.",
+  "Use the bash tool to inspect files, run commands, and gather information.",
 ].join("\n");
 
 export class PiSquaredAgentRuntime {
@@ -31,12 +40,15 @@ export class PiSquaredAgentRuntime {
   private model: Model<any>;
   private apiKey: string | undefined;
   private readonly sessionId: string;
+  private readonly tools: AgentTool<any>[];
 
   constructor(options: PiSquaredAgentRuntimeOptions) {
     this.authStore = options.authStore ?? new AuthStore();
     this.model = this.applyOAuthModelTransforms(options.model);
     this.apiKey = options.apiKey;
     this.sessionId = options.sessionId ?? randomUUID();
+    const cwd = options.cwd ?? process.cwd();
+    this.tools = [createBashTool(cwd)];
 
     const thinkingLevel = options.thinkingLevel ?? "off";
     const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
@@ -237,7 +249,7 @@ export class PiSquaredAgentRuntime {
     this.agent.state.messages = snapshot.messages;
     this.agent.state.thinkingLevel = snapshot.thinkingLevel;
     this.agent.state.systemPrompt = snapshot.systemPrompt;
-    this.agent.state.tools = [];
+    this.agent.state.tools = [...this.tools];
   }
 
   private handleAgentEvent(event: AgentEvent): void {

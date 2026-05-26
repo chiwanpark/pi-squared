@@ -73,11 +73,17 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
 
   tui.addInputListener((data) => {
     if (matchesKey(data, Key.ctrl("c"))) {
+      // If there's a running operation, abort it
       if (runtime.isBusy) {
         runtime.abort();
-      } else {
-        void stop();
       }
+
+      // Clear the editor input (remove the message being typed)
+      screen.editor.setText("");
+
+      // Request render to update the UI
+      tui.requestRender();
+
       return { consume: true };
     }
 
