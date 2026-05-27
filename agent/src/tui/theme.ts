@@ -14,6 +14,7 @@ export const style = {
   yellow: code(33, 39),
   red: code(31, 39),
   magenta: code(35, 39),
+  white: code(97, 39),
   gray: code(90, 39),
 };
 

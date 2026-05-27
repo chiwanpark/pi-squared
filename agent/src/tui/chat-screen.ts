@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import {
   Editor,
   truncateToWidth,
@@ -57,20 +58,20 @@ export class ChatScreen implements Component {
       snapshot.phase === "idle" ? style.cyan : snapshot.phase === "error" ? style.red : style.yellow;
 
     const editorLines = this.editor.render(safeWidth);
-    const header = this.renderHeader(safeWidth);
-    const help = this.renderHelp(safeWidth);
+    const footer = this.renderFooter(safeWidth);
     const messageLines = this.renderMessages(safeWidth);
     const errorLines = snapshot.lastError ? wrapWithPrefix(style.red("error: "), snapshot.lastError, safeWidth) : [];
     const noticeLines = this.renderNotice(safeWidth);
     const panelLines = this.panel ? this.panel.render(safeWidth) : [];
 
-    const reservedRows =
-      header.length + help.length + editorLines.length + errorLines.length + noticeLines.length + panelLines.length;
-    const availableMessageRows = Math.max(1, this.tui.terminal.rows - reservedRows);
-    const visibleMessages = messageLines.slice(-availableMessageRows);
-
-    return [...header, ...visibleMessages, ...noticeLines, ...errorLines, ...help, ...panelLines, ...editorLines].map(
-      (line) => truncateToWidth(line, safeWidth, ""),
+    // Emit the full message history rather than slicing to the visible viewport.
+    // Truncating here would prevent older lines from ever being written to the
+    // terminal, leaving tmux (and other terminals' native scrollback) with
+    // nothing to scroll. The underlying TUI handles natural terminal scrolling
+    // when total content exceeds the terminal height, pushing older lines into
+    // the scrollback buffer where the user (and tmux copy mode) can reach them.
+    return [...messageLines, ...noticeLines, ...errorLines, ...panelLines, ...editorLines, ...footer, ""].map((line) =>
+      truncateToWidth(line, safeWidth, ""),
     );
   }
 
@@ -82,22 +83,15 @@ export class ChatScreen implements Component {
     this.editor.invalidate();
   }
 
-  private renderHeader(width: number): string[] {
+  private renderFooter(width: number): string[] {
     const snapshot = this.runtime.status.getSnapshot();
-    const model = `${snapshot.model.provider}/${snapshot.model.id}`;
-    const thinking = snapshot.thinkingLevel === "off" ? "" : ` · thinking ${snapshot.thinkingLevel}`;
+    const provider = snapshot.model.provider;
+    const model = snapshot.model.id;
+    const thinking = ` ${snapshot.thinkingLevel}`;
+    const cwd = formatCwd(this.runtime.getCwd());
     const phase = formatPhase(snapshot.phase);
-    const title = `${style.bold("pi-squared")} ${style.gray("·")} ${style.dim(model + thinking)} ${style.gray("·")} ${phase}`;
+    const title = `${style.gray("(")}${style.gray(provider)}${style.gray(")")} ${style.bold(style.white(model))}${style.gray(thinking)} ${style.gray("·")} ${style.gray(cwd)} ${style.gray("·")} ${phase}`;
     return [truncateToWidth(title, width, "")];
-  }
-
-  private renderHelp(width: number): string[] {
-    const snapshot = this.runtime.status.getSnapshot();
-    const text =
-      snapshot.phase === "idle"
-        ? "enter send • shift+enter newline • / for commands • /help to list"
-        : "responding… ctrl+c or esc aborts";
-    return [truncateToWidth(style.gray(text), width, "")];
   }
 
   private renderNotice(width: number): string[] {
@@ -141,6 +135,13 @@ function formatPhase(phase: string): string {
     default:
       return phase;
   }
+}
+
+function formatCwd(cwd: string): string {
+  const home = homedir();
+  if (cwd === home) return "~";
+  if (cwd.startsWith(home + "/")) return "~" + cwd.slice(home.length);
+  return cwd;
 }
 
 function renderMessage(message: AgentMessage, width: number, streaming = false): string[] {

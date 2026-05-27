@@ -90,6 +90,10 @@ export class PiSquaredAgentRuntime {
     return this.agent.state.isStreaming;
   }
 
+  getCwd(): string {
+    return this.cwd;
+  }
+
   get messages(): AgentMessage[] {
     return this.status.getSnapshot().messages;
   }

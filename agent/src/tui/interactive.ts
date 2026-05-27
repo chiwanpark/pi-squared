@@ -11,7 +11,7 @@ export interface InteractiveOptions {
 
 export async function runInteractive(options: InteractiveOptions): Promise<void> {
   const terminal = new ProcessTerminal();
-  const tui = new TUI(terminal, true);
+  const tui = new TUI(terminal, false);
   const runtime = options.runtime;
 
   let stopped = false;
