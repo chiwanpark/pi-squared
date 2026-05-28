@@ -26,11 +26,11 @@
     "format:check": "pnpm --workspace-root format:check"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.75.5",
-    "@earendil-works/pi-ai": "^0.75.5",
-    "typebox": "1.1.38",
-    "@earendil-works/pi-tui": "^0.75.5",
-    "@tsports/go-osc52": "2.0.14-tsport"
+    "@earendil-works/pi-agent-core": "^0.76.0",
+    "@earendil-works/pi-ai": "^0.76.0",
+    "@earendil-works/pi-tui": "^0.76.0",
+    "@tsports/go-osc52": "2.0.14-tsport",
+    "typebox": "1.1.39"
   },
   "devDependencies": {
     "@types/node": "24.12.4",
