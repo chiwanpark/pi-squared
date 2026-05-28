@@ -20,10 +20,10 @@
     "test:watch": "vitest --passWithNoTests",
     "start": "pnpm build && node dist/cli.js",
     "dev": "tsx src/cli.ts",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "lint": "pnpm --workspace-root lint",
+    "lint:fix": "pnpm --workspace-root lint:fix",
+    "format": "pnpm --workspace-root format",
+    "format:check": "pnpm --workspace-root format:check"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.75.5",

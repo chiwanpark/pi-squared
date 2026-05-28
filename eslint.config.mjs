@@ -5,10 +5,10 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "coverage/**"],
+    ignores: ["**/dist/**", "**/node_modules/**", "**/coverage/**"],
   },
   {
-    files: ["**/*.{js,mjs,cjs}"],
+    files: ["**/*.{js,mjs,cjs,jsx}"],
     ...js.configs.recommended,
     languageOptions: {
       ecmaVersion: "latest",
@@ -17,7 +17,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["**/*.ts"],
+    files: ["**/*.{ts,tsx}"],
     extends: [tseslint.configs.recommended],
     languageOptions: {
       ecmaVersion: "latest",

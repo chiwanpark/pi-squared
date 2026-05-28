@@ -1,6 +1,4 @@
-node_modules
-agent/node_modules
-dist
-agent/dist
-coverage
+**/node_modules/**
+**/dist/**
+**/coverage/**
 pnpm-lock.yaml
