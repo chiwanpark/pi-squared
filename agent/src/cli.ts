@@ -35,11 +35,17 @@ async function main(): Promise<void> {
 
   const resolved = resolveModel({ authStore });
   const thinkingLevel = normalizeThinkingLevel(resolved.model, options.thinking);
+
+  // Use INIT_CWD (set by pnpm) to preserve the directory where the command was invoked,
+  // falling back to process.cwd() if INIT_CWD is not available (e.g., when running directly)
+  const cwd = process.env.INIT_CWD ?? process.cwd();
+
   const runtimeOptions: ConstructorParameters<typeof PiSquaredAgentRuntime>[0] = {
     model: resolved.model,
     thinkingLevel,
     systemPrompt: options.systemPrompt,
     authStore,
+    cwd,
   };
 
   const runtime = new PiSquaredAgentRuntime(runtimeOptions);

@@ -1,10 +1,12 @@
 import { homedir } from "node:os";
 import {
   Editor,
+  Markdown,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
   type Component,
+  type DefaultTextStyle,
   type TUI,
 } from "@earendil-works/pi-tui";
 
@@ -16,9 +18,9 @@ export interface ScreenPanel {
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
-import { isAssistantError, messageRole, messageToText } from "../runtime/messages.js";
+import { contentToText, isAssistantError, messageRole, messageToMarkdownBlocks } from "../runtime/messages.js";
 import type { PiSquaredAgentRuntime } from "../runtime/pi-agent.js";
-import { editorTheme, style } from "./theme.js";
+import { editorTheme, markdownTheme, style } from "./theme.js";
 
 export interface ChatScreenOptions {
   onSubmit: (text: string) => void;
@@ -54,10 +56,12 @@ export class ChatScreen implements Component {
     const snapshot = this.runtime.status.getSnapshot();
 
     this.editor.disableSubmit = snapshot.phase === "streaming" || snapshot.phase === "aborting";
-    this.editor.borderColor =
-      snapshot.phase === "idle" ? style.cyan : snapshot.phase === "error" ? style.red : style.yellow;
+    this.editor.borderColor = (text: string) => EDITOR_BORDER_MARKER + text.replace(/./g, " ");
 
-    const editorLines = this.editor.render(safeWidth);
+    const editorLines = this.editor
+      .render(safeWidth)
+      .map((line) => (line.includes(EDITOR_BORDER_MARKER) ? "" : line))
+      .map((line) => applyEditorBackground(line, safeWidth));
     const footer = this.renderFooter(safeWidth);
     const messageLines = this.renderMessages(safeWidth);
     const errorLines = snapshot.lastError ? wrapWithPrefix(style.red("error: "), snapshot.lastError, safeWidth) : [];
@@ -106,12 +110,15 @@ export class ChatScreen implements Component {
     const snapshot = this.runtime.status.getSnapshot();
     const lines: string[] = [];
 
+    const toolCalls = new Map<string, BashToolCall>();
+
     for (const message of snapshot.messages) {
-      lines.push(...renderMessage(message, width));
+      lines.push(...renderMessage(message, width, false, toolCalls));
+      collectBashToolCalls(message, toolCalls);
     }
 
     if (snapshot.streamingMessage) {
-      lines.push(...renderMessage(snapshot.streamingMessage, width, true));
+      lines.push(...renderMessage(snapshot.streamingMessage, width, true, toolCalls));
     }
 
     if (lines.length === 0) {
@@ -144,39 +151,198 @@ function formatCwd(cwd: string): string {
   return cwd;
 }
 
-function renderMessage(message: AgentMessage, width: number, streaming = false): string[] {
-  const role = messageRole(message);
-  const label = roleLabel(role);
-  const color = roleColor(role, isAssistantError(message));
-  const suffix = streaming ? "…" : "";
-  const text = messageToText(message) || suffix;
-  return wrapWithPrefix(`${color(label)}: `, text, width);
+interface BashToolCall {
+  command: string;
+  timeout: number | undefined;
 }
 
-function roleLabel(role: string): string {
-  switch (role) {
-    case "user":
-      return "you";
-    case "assistant":
-      return "pi2";
-    case "toolResult":
-      return "tool";
-    default:
-      return role;
+type UnknownRecord = Record<string, unknown>;
+
+const BLOCK_PADDING_Y = 1;
+const TOOL_RESULT_PADDING_X = 1;
+const EDITOR_BORDER_MARKER = "\u001b]pi-squared:editor-border\u0007";
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null;
+}
+
+function renderMessage(
+  message: AgentMessage,
+  width: number,
+  streaming = false,
+  toolCalls: ReadonlyMap<string, BashToolCall> = new Map(),
+): string[] {
+  const role = messageRole(message);
+  if (role === "toolResult") return renderToolResult(message, width, toolCalls);
+
+  const error = isAssistantError(message);
+  const blocks = messageToMarkdownBlocks(message);
+
+  if (streaming && blocks.length === 0) {
+    blocks.push({ kind: "message", text: "…" });
+  } else if (streaming && blocks.length > 0) {
+    const last = blocks[blocks.length - 1]!;
+    if (last.text.trim().length === 0) last.text = "…";
+  }
+
+  const lines: string[] = [];
+  for (const block of blocks) {
+    lines.push(...renderMarkdownBlock(block.text, width, blockStyle(role, block.kind, error)));
+  }
+
+  return lines;
+}
+
+function collectBashToolCalls(message: AgentMessage, toolCalls: Map<string, BashToolCall>): void {
+  if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.content)) return;
+
+  for (const block of message.content) {
+    if (!isRecord(block) || block.type !== "toolCall" || block.name !== "bash" || typeof block.id !== "string")
+      continue;
+    const args = isRecord(block.arguments) ? block.arguments : undefined;
+    const command = typeof args?.command === "string" ? args.command : "";
+    const timeout = typeof args?.timeout === "number" ? args.timeout : undefined;
+    toolCalls.set(block.id, { command, timeout });
   }
 }
 
-function roleColor(role: string, error: boolean): (text: string) => string {
-  if (error) return style.red;
+function renderToolResult(
+  message: AgentMessage,
+  width: number,
+  toolCalls: ReadonlyMap<string, BashToolCall>,
+): string[] {
+  const toolCallId = isRecord(message) && typeof message.toolCallId === "string" ? message.toolCallId : undefined;
+  const toolName = isRecord(message) && typeof message.toolName === "string" ? message.toolName : "tool";
+  const bashCall = toolCallId ? toolCalls.get(toolCallId) : undefined;
+  const command = sanitizeToolResultText(bashCall?.command ?? toolName).replace(/\n+$/, "") || toolName;
+  const timeout = bashCall?.timeout === undefined ? "none" : String(bashCall.timeout);
+  const output = sanitizeToolResultText(isRecord(message) ? contentToText(message.content) : "");
+
+  const contentLines = [
+    ...renderToolResultHeader(command, timeout),
+    "",
+    ...styleMultiline(output || "(no output)", style.gray),
+  ];
+  const paddingLine = applyLineBackground("", width, style.bgTool);
+  return [
+    ...Array.from({ length: BLOCK_PADDING_Y }, () => paddingLine),
+    ...contentLines.map((line) => applyToolResultLineBackground(line, width)),
+    ...Array.from({ length: BLOCK_PADDING_Y }, () => paddingLine),
+  ];
+}
+
+function renderToolResultHeader(command: string, timeout: string): string[] {
+  const commandLines = command.split("\n");
+  const lastIndex = commandLines.length - 1;
+
+  return commandLines.map((line, index) => {
+    const prefix = index === 0 ? `${style.bold(style.toolTitle("bash"))} ` : "     ";
+    const suffix = index === lastIndex ? ` ${style.gray(`(timeout: ${timeout})`)}` : "";
+    return `${prefix}${style.toolTitle(line.length > 0 ? line : " ")}${suffix}`;
+  });
+}
+
+function sanitizeToolResultText(text: string): string {
+  return stripAnsiEscapeCodes(text)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\t/g, "   ")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "");
+}
+
+function stripAnsiEscapeCodes(text: string): string {
+  let result = "";
+  let index = 0;
+
+  while (index < text.length) {
+    const escapeLength = ansiEscapeSequenceLength(text, index);
+    if (escapeLength > 0) {
+      index += escapeLength;
+      continue;
+    }
+
+    result += text[index];
+    index++;
+  }
+
+  return result;
+}
+
+function ansiEscapeSequenceLength(text: string, index: number): number {
+  const char = text[index];
+
+  if (char === "\u009b") return controlSequenceLength(text, index + 1, index);
+  if (char !== "\u001b") return 0;
+
+  const next = text[index + 1];
+  if (!next) return 1;
+
+  if (next === "[") return controlSequenceLength(text, index + 2, index);
+
+  if (next === "]" || next === "_" || next === "P" || next === "^") {
+    for (let cursor = index + 2; cursor < text.length; cursor++) {
+      if (text[cursor] === "\u0007") return cursor + 1 - index;
+      if (text[cursor] === "\u001b" && text[cursor + 1] === "\\") return cursor + 2 - index;
+    }
+    return text.length - index;
+  }
+
+  if (/[\x40-\x5f]/.test(next)) return 2;
+  return 1;
+}
+
+function controlSequenceLength(text: string, cursor: number, start: number): number {
+  while (cursor < text.length) {
+    const code = text.charCodeAt(cursor);
+    if (code >= 0x40 && code <= 0x7e) return cursor + 1 - start;
+    cursor++;
+  }
+  return text.length - start;
+}
+
+function styleMultiline(text: string, color: (text: string) => string): string[] {
+  return text.split("\n").map((line) => color(line.length > 0 ? line : " "));
+}
+
+function applyToolResultLineBackground(line: string, width: number): string {
+  return applyLineBackground(`${" ".repeat(TOOL_RESULT_PADDING_X)}${line}`, width, style.bgTool);
+}
+
+function applyLineBackground(line: string, width: number, bgColor: (text: string) => string): string {
+  const truncated = truncateToWidth(line, width, "");
+  const padding = " ".repeat(Math.max(0, width - visibleWidth(truncated)));
+  return bgColor(truncated + padding);
+}
+
+function applyEditorBackground(line: string, width: number): string {
+  const truncated = truncateToWidth(line, width, "");
+  const padding = " ".repeat(Math.max(0, width - visibleWidth(truncated)));
+  return style.bgUser(keepEditorBackgroundAfterAnsiReset(truncated + padding));
+}
+
+function keepEditorBackgroundAfterAnsiReset(text: string): string {
+  const userBackgroundOpen = style.bgUser("").replace("\u001b[49m", "");
+  return text.replace(/\u001b\[(?:0|49)m/g, (reset) => reset + userBackgroundOpen);
+}
+
+function renderMarkdownBlock(text: string, width: number, defaultTextStyle: DefaultTextStyle): string[] {
+  const markdown = new Markdown(text, 1, BLOCK_PADDING_Y, markdownTheme, defaultTextStyle);
+  return markdown.render(width);
+}
+
+function blockStyle(role: string, kind: "thinking" | "message", error: boolean): DefaultTextStyle {
+  if (error) return { bgColor: style.bgError, color: style.red };
+  if (kind === "thinking") return { bgColor: style.bgThinking, color: style.gray, italic: true };
+
   switch (role) {
     case "user":
-      return style.green;
+      return { bgColor: style.bgUser, color: style.text };
     case "assistant":
-      return style.cyan;
+      return { bgColor: style.bgAssistant, color: style.text };
     case "toolResult":
-      return style.magenta;
+      return { bgColor: style.bgTool, color: style.text };
     default:
-      return style.gray;
+      return { bgColor: style.bgCustom, color: style.text };
   }
 }
 

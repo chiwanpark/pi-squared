@@ -11,15 +11,15 @@ import { style } from "./theme.js";
 import type { ChatScreen } from "./chat-screen.js";
 
 const SELECT_THEME: SelectListTheme = {
-  selectedPrefix: style.cyan,
-  selectedText: style.cyan,
+  selectedPrefix: style.accent,
+  selectedText: style.accent,
   description: style.gray,
   scrollInfo: style.gray,
   noMatch: style.yellow,
 };
 
 function panelSeparator(width: number): string {
-  return style.cyan("─".repeat(Math.max(1, width)));
+  return style.border("─".repeat(Math.max(1, width)));
 }
 
 export interface SelectOverlayOptions {

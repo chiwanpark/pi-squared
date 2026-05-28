@@ -2,22 +2,28 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 type UnknownRecord = Record<string, unknown>;
 
+export interface MessageMarkdownBlock {
+  kind: "thinking" | "message";
+  text: string;
+}
+
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
 }
 
-function contentBlockToText(block: unknown): string {
+function contentBlockToText(block: unknown, options?: { includeThinkingTags?: boolean }): string {
   if (!isRecord(block)) return "";
 
   switch (block.type) {
     case "text":
       return typeof block.text === "string" ? block.text : "";
     case "thinking":
-      return typeof block.thinking === "string" ? `<thinking>\n${block.thinking}\n</thinking>` : "";
+      if (typeof block.thinking !== "string") return "";
+      return options?.includeThinkingTags ? `<thinking>\n${block.thinking}\n</thinking>` : block.thinking;
     case "image":
       return typeof block.mimeType === "string" ? `[image: ${block.mimeType}]` : "[image]";
     case "toolCall":
-      return typeof block.name === "string" ? `[tool call: ${block.name}]` : "[tool call]";
+      return "";
     default:
       return "";
   }
@@ -34,7 +40,10 @@ export function createUserMessage(text: string): AgentMessage {
 export function contentToText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content.map(contentBlockToText).filter(Boolean).join("\n");
+  return content
+    .map((block) => contentBlockToText(block, { includeThinkingTags: true }))
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function messageRole(message: AgentMessage): string {
@@ -61,6 +70,38 @@ export function messageToText(message: AgentMessage): string {
       }
       return JSON.stringify(message);
   }
+}
+
+export function messageToMarkdownBlocks(message: AgentMessage): MessageMarkdownBlock[] {
+  if (!isRecord(message)) return [{ kind: "message", text: "" }];
+
+  if (message.role !== "assistant") {
+    return [{ kind: "message", text: messageToText(message) }];
+  }
+
+  const thinking: string[] = [];
+  const body: string[] = [];
+
+  if (Array.isArray(message.content)) {
+    for (const block of message.content) {
+      if (!isRecord(block)) continue;
+      const text = contentBlockToText(block);
+      if (!text) continue;
+      if (block.type === "thinking") thinking.push(text);
+      else body.push(text);
+    }
+  } else if (typeof message.content === "string") {
+    body.push(message.content);
+  }
+
+  if (typeof message.errorMessage === "string" && message.errorMessage.length > 0) {
+    body.push(`Error: ${message.errorMessage}`);
+  }
+
+  return [
+    ...(thinking.length > 0 ? [{ kind: "thinking" as const, text: thinking.join("\n\n") }] : []),
+    ...(body.length > 0 ? [{ kind: "message" as const, text: body.join("\n\n") }] : []),
+  ];
 }
 
 export function isAssistantError(message: AgentMessage): boolean {
