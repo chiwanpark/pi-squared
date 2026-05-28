@@ -20,6 +20,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 import { contentToText, isAssistantError, messageRole, messageToMarkdownBlocks } from "../runtime/messages.js";
 import type { PiSquaredAgentRuntime } from "../runtime/pi-agent.js";
+import type { AgentStatusSnapshot } from "../runtime/status-store.js";
 import { editorTheme, markdownTheme, style } from "./theme.js";
 
 export interface ChatScreenOptions {
@@ -29,6 +30,8 @@ export interface ChatScreenOptions {
 export class ChatScreen implements Component {
   readonly editor: Editor;
   private panel: ScreenPanel | null = null;
+  private messageRenderCache: { width: number; updatedAt: number; lines: string[] } | null = null;
+  private errorRenderCache: { width: number; error: string | undefined; lines: string[] } | null = null;
 
   private readonly panelProxy: Component = {
     render: () => [],
@@ -62,10 +65,12 @@ export class ChatScreen implements Component {
       .render(safeWidth)
       .map((line) => (line.includes(EDITOR_BORDER_MARKER) ? "" : line))
       .map((line) => applyEditorBackground(line, safeWidth));
-    const footer = this.renderFooter(safeWidth);
-    const messageLines = this.renderMessages(safeWidth);
-    const errorLines = snapshot.lastError ? wrapWithPrefix(style.red("error: "), snapshot.lastError, safeWidth) : [];
-    const panelLines = this.panel ? this.panel.render(safeWidth) : [];
+    const footer = this.renderFooter(safeWidth, snapshot);
+    const messageLines = this.renderMessages(safeWidth, snapshot);
+    const errorLines = this.renderError(safeWidth, snapshot.lastError);
+    const panelLines = this.panel
+      ? this.panel.render(safeWidth).map((line) => truncateToWidth(line, safeWidth, ""))
+      : [];
 
     // Emit the full message history rather than slicing to the visible viewport.
     // Truncating here would prevent older lines from ever being written to the
@@ -73,9 +78,12 @@ export class ChatScreen implements Component {
     // nothing to scroll. The underlying TUI handles natural terminal scrolling
     // when total content exceeds the terminal height, pushing older lines into
     // the scrollback buffer where the user (and tmux copy mode) can reach them.
-    return [...messageLines, ...errorLines, ...panelLines, ...editorLines, ...footer, ""].map((line) =>
-      truncateToWidth(line, safeWidth, ""),
-    );
+    //
+    // The transcript is cached by status timestamp so plain editor input does
+    // not re-run Markdown/tool-output rendering for the entire history on every
+    // keystroke. Keep per-section truncation instead of a final whole-screen map
+    // to avoid walking huge transcripts just because the input line changed.
+    return [...messageLines, ...errorLines, ...panelLines, ...editorLines, ...footer, ""];
   }
 
   handleInput(data: string): void {
@@ -83,11 +91,12 @@ export class ChatScreen implements Component {
   }
 
   invalidate(): void {
+    this.messageRenderCache = null;
+    this.errorRenderCache = null;
     this.editor.invalidate();
   }
 
-  private renderFooter(width: number): string[] {
-    const snapshot = this.runtime.status.getSnapshot();
+  private renderFooter(width: number, snapshot: AgentStatusSnapshot): string[] {
     const provider = snapshot.model.provider;
     const model = snapshot.model.id;
     const thinking = ` ${snapshot.thinkingLevel}`;
@@ -97,8 +106,23 @@ export class ChatScreen implements Component {
     return [truncateToWidth(title, width, "")];
   }
 
-  private renderMessages(width: number): string[] {
-    const snapshot = this.runtime.status.getSnapshot();
+  private renderError(width: number, error: string | undefined): string[] {
+    const cached = this.errorRenderCache;
+    if (cached && cached.width === width && cached.error === error) {
+      return cached.lines;
+    }
+
+    const lines = error ? wrapWithPrefix(style.red("error: "), error, width) : [];
+    this.errorRenderCache = { width, error, lines };
+    return lines;
+  }
+
+  private renderMessages(width: number, snapshot: AgentStatusSnapshot): string[] {
+    const cached = this.messageRenderCache;
+    if (cached && cached.width === width && cached.updatedAt === snapshot.updatedAt) {
+      return cached.lines;
+    }
+
     const lines: string[] = [];
 
     const toolCalls = new Map<string, BashToolCall>();
@@ -112,11 +136,12 @@ export class ChatScreen implements Component {
       lines.push(...renderMessage(snapshot.streamingMessage, width, true, toolCalls));
     }
 
-    if (lines.length === 0) {
-      return [style.gray("Welcome to pi-squared. Type a message to start chatting.")];
-    }
+    const renderedLines = (
+      lines.length === 0 ? [style.gray("Welcome to pi-squared. Type a message to start chatting.")] : lines
+    ).map((line) => truncateToWidth(line, width, ""));
 
-    return lines;
+    this.messageRenderCache = { width, updatedAt: snapshot.updatedAt, lines: renderedLines };
+    return renderedLines;
   }
 }
 
