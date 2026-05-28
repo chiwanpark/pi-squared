@@ -65,7 +65,6 @@ export class ChatScreen implements Component {
     const footer = this.renderFooter(safeWidth);
     const messageLines = this.renderMessages(safeWidth);
     const errorLines = snapshot.lastError ? wrapWithPrefix(style.red("error: "), snapshot.lastError, safeWidth) : [];
-    const noticeLines = this.renderNotice(safeWidth);
     const panelLines = this.panel ? this.panel.render(safeWidth) : [];
 
     // Emit the full message history rather than slicing to the visible viewport.
@@ -74,7 +73,7 @@ export class ChatScreen implements Component {
     // nothing to scroll. The underlying TUI handles natural terminal scrolling
     // when total content exceeds the terminal height, pushing older lines into
     // the scrollback buffer where the user (and tmux copy mode) can reach them.
-    return [...messageLines, ...noticeLines, ...errorLines, ...panelLines, ...editorLines, ...footer, ""].map((line) =>
+    return [...messageLines, ...errorLines, ...panelLines, ...editorLines, ...footer, ""].map((line) =>
       truncateToWidth(line, safeWidth, ""),
     );
   }
@@ -96,14 +95,6 @@ export class ChatScreen implements Component {
     const phase = formatPhase(snapshot.phase);
     const title = `${style.gray("(")}${style.gray(provider)}${style.gray(")")} ${style.bold(style.white(model))}${style.gray(thinking)} ${style.gray("·")} ${style.gray(cwd)} ${style.gray("·")} ${phase}`;
     return [truncateToWidth(title, width, "")];
-  }
-
-  private renderNotice(width: number): string[] {
-    const snapshot = this.runtime.status.getSnapshot();
-    const notice = snapshot.lastNotice;
-    if (!notice) return [];
-    const color = notice.level === "error" ? style.red : notice.level === "warn" ? style.yellow : style.cyan;
-    return wrapWithPrefix(color(`${notice.level}: `), notice.message, width);
   }
 
   private renderMessages(width: number): string[] {
