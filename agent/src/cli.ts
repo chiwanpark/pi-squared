@@ -2,6 +2,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import { AuthStore } from "./runtime/auth-store.js";
+import { ConfigStore, type PersistedModelConfig } from "./runtime/config-store.js";
 import { PiSquaredAgentRuntime } from "./runtime/pi-agent.js";
 import { normalizeThinkingLevel, resolveModel } from "./runtime/model-resolver.js";
 import { runInteractive } from "./tui/interactive.js";
@@ -11,7 +12,7 @@ const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as 
 
 interface CliOptions {
   systemPrompt?: string;
-  thinking: ThinkingLevel;
+  thinking?: ThinkingLevel;
   help: boolean;
   version: boolean;
   initialMessage?: string;
@@ -33,8 +34,13 @@ async function main(): Promise<void> {
   const authStore = new AuthStore();
   await authStore.load();
 
-  const resolved = resolveModel({ authStore });
-  const thinkingLevel = normalizeThinkingLevel(resolved.model, options.thinking);
+  const configStore = new ConfigStore();
+  await configStore.load();
+  const config = configStore.getConfig();
+
+  const resolved = resolveConfiguredModel(authStore, config.model);
+  const requestedThinking = options.thinking ?? config.thinking ?? "off";
+  const thinkingLevel = normalizeThinkingLevel(resolved.model, requestedThinking);
 
   // Use INIT_CWD (set by pnpm) to preserve the directory where the command was invoked,
   // falling back to process.cwd() if INIT_CWD is not available (e.g., when running directly)
@@ -49,15 +55,25 @@ async function main(): Promise<void> {
   };
 
   const runtime = new PiSquaredAgentRuntime(runtimeOptions);
-  const interactiveOptions: Parameters<typeof runInteractive>[0] = { runtime };
+  const interactiveOptions: Parameters<typeof runInteractive>[0] = { runtime, configStore };
   if (options.initialMessage) interactiveOptions.initialMessage = options.initialMessage;
 
   await runInteractive(interactiveOptions);
 }
 
+function resolveConfiguredModel(authStore: AuthStore, modelConfig: PersistedModelConfig | undefined) {
+  if (!modelConfig) return resolveModel({ authStore });
+  try {
+    return resolveModel({ authStore, provider: modelConfig.provider, model: modelConfig.id });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Ignoring saved model configuration: ${message}`);
+    return resolveModel({ authStore });
+  }
+}
+
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
-    thinking: "off",
     help: false,
     version: false,
   };
@@ -131,7 +147,7 @@ Usage:
   pi2 [options] [initial message]
 
 Options:
-      --thinking <level>           off|minimal|low|medium|high|xhigh (default: off)
+      --thinking <level>           off|minimal|low|medium|high|xhigh (default: saved config or off)
       --system-prompt <text>       Override the default system prompt.
   -h, --help                       Show this help.
   -v, --version                    Show version.
@@ -139,6 +155,8 @@ Options:
 The provider and model are selected automatically from available credentials:
   - OAuth credentials stored in ~/.pi-squared/auth.json (override: PI_SQUARED_AUTH_FILE)
   - Environment API keys, e.g. ANTHROPIC_API_KEY or OPENAI_API_KEY
+
+Saved preferences are stored in ~/.pi-squared/config.json (override: PI_SQUARED_CONFIG_FILE).
 
 Inside the TUI, type / to open the command menu. Useful commands:
   /model, /thinking, /login, /logout, /help, /quit

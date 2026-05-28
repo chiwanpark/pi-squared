@@ -13,6 +13,7 @@ import type { AutocompleteItem, SlashCommand, TUI } from "@earendil-works/pi-tui
 import { Sequence as OscSequence } from "@tsports/go-osc52";
 
 import type { AuthStore } from "../runtime/auth-store.js";
+import type { ConfigStore } from "../runtime/config-store.js";
 import type { ChatScreen } from "./chat-screen.js";
 import type { PiSquaredAgentRuntime } from "../runtime/pi-agent.js";
 import {
@@ -58,14 +59,14 @@ export function parseSlashCommand(text: string): ParsedCommand | null {
  * Build the slash command registry. Returns both the commands the editor
  * autocomplete uses and the handler map for dispatching submitted commands.
  */
-export function createCommands(authStore?: AuthStore): CommandDefinition[] {
+export function createCommands(authStore?: AuthStore, configStore?: ConfigStore): CommandDefinition[] {
   return [
     helpCommand(),
     newSessionCommand(),
     quitCommand("quit"),
     quitCommand("exit"),
-    modelCommand(authStore),
-    thinkingCommand(),
+    modelCommand(authStore, configStore),
+    thinkingCommand(configStore),
     loginCommand(),
     logoutCommand(),
   ];
@@ -140,7 +141,7 @@ function quitCommand(name: "quit" | "exit"): CommandDefinition {
   };
 }
 
-function modelCommand(authStore?: AuthStore): CommandDefinition {
+function modelCommand(authStore?: AuthStore, configStore?: ConfigStore): CommandDefinition {
   return {
     command: {
       name: "model",
@@ -151,7 +152,7 @@ function modelCommand(authStore?: AuthStore): CommandDefinition {
     async execute(args, ctx) {
       if (args.length > 0) {
         const next = resolveModelReference(args, ctx.runtime.authStore);
-        applyModel(ctx, next.provider, next.model);
+        await applyModel(ctx, next.provider, next.model, configStore);
         return;
       }
 
@@ -177,12 +178,12 @@ function modelCommand(authStore?: AuthStore): CommandDefinition {
       });
       if (!modelChoice) return;
 
-      applyModel(ctx, providerChoice, modelChoice);
+      await applyModel(ctx, providerChoice, modelChoice, configStore);
     },
   };
 }
 
-function thinkingCommand(): CommandDefinition {
+function thinkingCommand(configStore?: ConfigStore): CommandDefinition {
   return {
     command: {
       name: "thinking",
@@ -211,6 +212,7 @@ function thinkingCommand(): CommandDefinition {
       const snapshot = ctx.runtime.status.getSnapshot();
       const next = normalizeThinkingLevel(ctx.runtime.agent.state.model, target as (typeof THINKING_LEVELS)[number]);
       ctx.runtime.setThinkingLevel(next);
+      await configStore?.setThinkingLevel(next);
       if (next !== target) {
         ctx.runtime.setNotice(
           `Model ${snapshot.model.provider}/${snapshot.model.id} does not support thinking='${target}'. Using '${next}'.`,
@@ -356,11 +358,17 @@ function logoutCommand(): CommandDefinition {
   };
 }
 
-function applyModel(ctx: CommandContext, provider: string, modelId: string): void {
+async function applyModel(
+  ctx: CommandContext,
+  provider: string,
+  modelId: string,
+  configStore?: ConfigStore,
+): Promise<void> {
   const model = findModelByReference(provider, modelId);
   ctx.runtime.setModel(model);
   const thinking = normalizeThinkingLevel(model, ctx.runtime.status.getSnapshot().thinkingLevel);
   ctx.runtime.setThinkingLevel(thinking);
+  await configStore?.setModelAndThinking(model.provider, model.id, thinking);
   ctx.runtime.setNotice(`Switched to ${model.provider}/${model.id}.`, "info");
 }
 

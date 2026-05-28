@@ -1,5 +1,6 @@
 import { CombinedAutocompleteProvider, Key, matchesKey, ProcessTerminal, TUI } from "@earendil-works/pi-tui";
 
+import type { ConfigStore } from "../runtime/config-store.js";
 import type { PiSquaredAgentRuntime } from "../runtime/pi-agent.js";
 import { ChatScreen } from "./chat-screen.js";
 import { buildRegistry, createCommands, type CommandContext } from "./commands.js";
@@ -7,6 +8,7 @@ import { buildRegistry, createCommands, type CommandContext } from "./commands.j
 export interface InteractiveOptions {
   runtime: PiSquaredAgentRuntime;
   initialMessage?: string;
+  configStore?: ConfigStore;
 }
 
 export async function runInteractive(options: InteractiveOptions): Promise<void> {
@@ -35,7 +37,7 @@ export async function runInteractive(options: InteractiveOptions): Promise<void>
   };
 
   const screen = new ChatScreen(tui, runtime, { onSubmit: (text) => submit(text) });
-  const registry = buildRegistry(createCommands(runtime.authStore));
+  const registry = buildRegistry(createCommands(runtime.authStore, options.configStore));
   const commandContext: CommandContext = {
     tui,
     screen,

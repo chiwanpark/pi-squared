@@ -31,6 +31,13 @@ export {
   type ResolvedModel,
 } from "./runtime/model-resolver.js";
 export { AuthStore, defaultAuthFilePath, type AuthFileShape, type AuthStoreOptions } from "./runtime/auth-store.js";
+export {
+  ConfigStore,
+  defaultConfigFilePath,
+  type ConfigFileShape,
+  type ConfigStoreOptions,
+  type PersistedModelConfig,
+} from "./runtime/config-store.js";
 export { runInteractive, type InteractiveOptions } from "./tui/interactive.js";
 export {
   buildRegistry,
