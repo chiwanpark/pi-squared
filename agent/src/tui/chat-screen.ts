@@ -102,7 +102,9 @@ export class ChatScreen implements Component {
     const thinking = ` ${snapshot.thinkingLevel}`;
     const cwd = formatCwd(this.runtime.getCwd());
     const phase = formatPhase(snapshot.phase);
-    const title = `${style.gray("(")}${style.gray(provider)}${style.gray(")")} ${style.bold(style.white(model))}${style.gray(thinking)} ${style.gray("·")} ${style.gray(cwd)} ${style.gray("·")} ${phase}`;
+    const contextWindow = renderContextWindowUsage(snapshot);
+    const contextPart = contextWindow ? ` ${style.gray("·")} ${contextWindow}` : "";
+    const title = `${style.gray("(")}${style.gray(provider)}${style.gray(")")} ${style.bold(style.white(model))}${style.gray(thinking)} ${style.gray("·")} ${style.gray(cwd)}${contextPart} ${style.gray("·")} ${phase}`;
     return [truncateToWidth(title, width, "")];
   }
 
@@ -165,6 +167,160 @@ function formatCwd(cwd: string): string {
   if (cwd === home) return "~";
   if (cwd.startsWith(home + "/")) return "~" + cwd.slice(home.length);
   return cwd;
+}
+
+function renderContextWindowUsage(snapshot: AgentStatusSnapshot): string | undefined {
+  const contextWindow = snapshot.model.contextWindow;
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0) return undefined;
+
+  const messages = snapshot.streamingMessage ? [...snapshot.messages, snapshot.streamingMessage] : snapshot.messages;
+  const usedTokens = estimateContextTokens(messages);
+  const percent = Math.round((usedTokens / contextWindow) * 100);
+  const percentage = styleContextUsagePercentage(`${percent}%`, percent);
+
+  return `${percentage}${style.gray(" used")} ${style.gray(`(${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindow)})`)}`;
+}
+
+function styleContextUsagePercentage(text: string, percent: number): string {
+  if (percent >= 90) return style.red(text);
+  if (percent >= 70) return style.yellow(text);
+  return style.green(text);
+}
+
+function formatTokenCount(count: number): string {
+  const safeCount = Math.max(0, Math.round(count));
+  if (safeCount < 1000) return String(safeCount);
+  if (safeCount < 10_000) return `${(safeCount / 1000).toFixed(1).replace(/\.0$/, "")}K`;
+  if (safeCount < 1_000_000) return `${Math.round(safeCount / 1000)}K`;
+  if (safeCount < 10_000_000) return `${(safeCount / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  return `${Math.round(safeCount / 1_000_000)}M`;
+}
+
+function estimateContextTokens(messages: AgentMessage[]): number {
+  const usageInfo = getLastAssistantUsageInfo(messages);
+  if (!usageInfo) return messages.reduce((total, message) => total + estimateMessageTokens(message), 0);
+
+  const usageTokens = calculateUsageTokens(usageInfo.usage);
+  const trailingTokens = messages
+    .slice(usageInfo.index + 1)
+    .reduce((total, message) => total + estimateMessageTokens(message), 0);
+  return usageTokens + trailingTokens;
+}
+
+interface UsageInfo {
+  usage: UsageLike;
+  index: number;
+}
+
+interface UsageLike {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+}
+
+function getLastAssistantUsageInfo(messages: AgentMessage[]): UsageInfo | undefined {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const usage = getAssistantUsage(messages[index]!);
+    if (usage) return { usage, index };
+  }
+  return undefined;
+}
+
+function getAssistantUsage(message: AgentMessage): UsageLike | undefined {
+  if (!isRecord(message) || message.role !== "assistant" || !isRecord(message.usage)) return undefined;
+  if (message.stopReason === "aborted" || message.stopReason === "error") return undefined;
+
+  const usage = message.usage;
+  const input = numberField(usage.input);
+  const output = numberField(usage.output);
+  const cacheRead = numberField(usage.cacheRead);
+  const cacheWrite = numberField(usage.cacheWrite);
+  const totalTokens = numberField(usage.totalTokens);
+  if ([input, output, cacheRead, cacheWrite, totalTokens].every((value) => value === undefined)) return undefined;
+
+  const usageLike = {
+    input: input ?? 0,
+    output: output ?? 0,
+    cacheRead: cacheRead ?? 0,
+    cacheWrite: cacheWrite ?? 0,
+    totalTokens: totalTokens ?? 0,
+  };
+
+  // Streaming partial assistant messages are initialized with a zero-filled
+  // usage object. Treating that as authoritative makes the footer show
+  // 0 / limit until the final usage arrives; ignore it so we keep using the
+  // previous completed usage plus estimated trailing messages while streaming.
+  if (calculateUsageTokens(usageLike) <= 0) return undefined;
+
+  return usageLike;
+}
+
+function calculateUsageTokens(usage: UsageLike): number {
+  return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+}
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function estimateMessageTokens(message: AgentMessage): number {
+  return Math.ceil(estimateMessageChars(message) / 4);
+}
+
+function estimateMessageChars(message: AgentMessage): number {
+  if (!isRecord(message)) return safeStringify(message).length;
+
+  switch (message.role) {
+    case "user":
+    case "toolResult":
+      return estimateContentChars(message.content);
+    case "assistant":
+      return (
+        estimateAssistantContentChars(message.content) +
+        (typeof message.errorMessage === "string" ? message.errorMessage.length : 0)
+      );
+    default:
+      return typeof message.content === "string" || Array.isArray(message.content)
+        ? estimateContentChars(message.content)
+        : safeStringify(message).length;
+  }
+}
+
+function estimateContentChars(content: unknown): number {
+  if (typeof content === "string") return content.length;
+  if (!Array.isArray(content)) return 0;
+  return content.reduce((total, block) => total + estimateContentBlockChars(block), 0);
+}
+
+function estimateAssistantContentChars(content: unknown): number {
+  if (typeof content === "string") return content.length;
+  if (!Array.isArray(content)) return 0;
+  return content.reduce((total, block) => total + estimateAssistantContentBlockChars(block), 0);
+}
+
+function estimateContentBlockChars(block: unknown): number {
+  if (!isRecord(block)) return 0;
+  if (block.type === "text" && typeof block.text === "string") return block.text.length;
+  if (block.type === "image") return 4800;
+  return 0;
+}
+
+function estimateAssistantContentBlockChars(block: unknown): number {
+  if (!isRecord(block)) return 0;
+  if (block.type === "text" && typeof block.text === "string") return block.text.length;
+  if (block.type === "thinking" && typeof block.thinking === "string") return block.thinking.length;
+  if (block.type === "toolCall") return String(block.name ?? "").length + safeStringify(block.arguments).length;
+  return estimateContentBlockChars(block);
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return String(value);
+  }
 }
 
 interface ToolCallSummary {

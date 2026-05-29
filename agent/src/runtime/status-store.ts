@@ -7,6 +7,7 @@ export interface ModelStatus {
   provider: string;
   id: string;
   name: string;
+  contextWindow: number;
 }
 
 export type NoticeLevel = "info" | "warn" | "error";
@@ -40,6 +41,7 @@ export function modelToStatus(model: Model<any>): ModelStatus {
     provider: model.provider,
     id: model.id,
     name: model.name,
+    contextWindow: model.contextWindow,
   };
 }
 
