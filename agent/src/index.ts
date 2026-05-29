@@ -48,3 +48,18 @@ export {
   type CommandRegistry,
   type ParsedCommand,
 } from "./tui/commands.js";
+
+export {
+  createReadTool,
+  createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createWriteTool,
+  type ReadToolInput,
+  type EditToolInput,
+  type FindToolInput,
+  type GrepToolInput,
+  type LsToolInput,
+  type WriteToolInput,
+} from "./tools/file/index.js";

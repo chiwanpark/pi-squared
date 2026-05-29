@@ -125,7 +125,7 @@ export class ChatScreen implements Component {
 
     const lines: string[] = [];
 
-    const toolCalls = new Map<string, BashToolCall>();
+    const toolCalls = new Map<string, ToolCallSummary>();
 
     for (const message of snapshot.messages) {
       lines.push(...renderMessage(message, width, false, toolCalls));
@@ -167,8 +167,9 @@ function formatCwd(cwd: string): string {
   return cwd;
 }
 
-interface BashToolCall {
-  command: string;
+interface ToolCallSummary {
+  name: string;
+  summary: string;
   timeout: number | undefined;
 }
 
@@ -186,7 +187,7 @@ function renderMessage(
   message: AgentMessage,
   width: number,
   streaming = false,
-  toolCalls: ReadonlyMap<string, BashToolCall> = new Map(),
+  toolCalls: ReadonlyMap<string, ToolCallSummary> = new Map(),
 ): string[] {
   const role = messageRole(message);
   if (role === "toolResult") return renderToolResult(message, width, toolCalls);
@@ -209,33 +210,33 @@ function renderMessage(
   return lines;
 }
 
-function collectBashToolCalls(message: AgentMessage, toolCalls: Map<string, BashToolCall>): void {
+function collectBashToolCalls(message: AgentMessage, toolCalls: Map<string, ToolCallSummary>): void {
   if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.content)) return;
 
   for (const block of message.content) {
-    if (!isRecord(block) || block.type !== "toolCall" || block.name !== "bash" || typeof block.id !== "string")
+    if (!isRecord(block) || block.type !== "toolCall" || typeof block.name !== "string" || typeof block.id !== "string")
       continue;
     const args = isRecord(block.arguments) ? block.arguments : undefined;
-    const command = typeof args?.command === "string" ? args.command : "";
     const timeout = typeof args?.timeout === "number" ? args.timeout : undefined;
-    toolCalls.set(block.id, { command, timeout });
+    toolCalls.set(block.id, { name: block.name, summary: summarizeToolCall(block.name, args), timeout });
   }
 }
 
 function renderToolResult(
   message: AgentMessage,
   width: number,
-  toolCalls: ReadonlyMap<string, BashToolCall>,
+  toolCalls: ReadonlyMap<string, ToolCallSummary>,
 ): string[] {
   const toolCallId = isRecord(message) && typeof message.toolCallId === "string" ? message.toolCallId : undefined;
   const toolName = isRecord(message) && typeof message.toolName === "string" ? message.toolName : "tool";
-  const bashCall = toolCallId ? toolCalls.get(toolCallId) : undefined;
-  const command = sanitizeToolResultText(bashCall?.command ?? toolName).replace(/\n+$/, "") || toolName;
-  const timeout = bashCall?.timeout === undefined ? "none" : String(bashCall.timeout);
+  const call = toolCallId ? toolCalls.get(toolCallId) : undefined;
+  const label = call?.name ?? toolName;
+  const command = sanitizeToolResultText(call?.summary ?? toolName).replace(/\n+$/, "") || toolName;
+  const timeout = call?.timeout === undefined ? undefined : String(call.timeout);
   const output = sanitizeToolResultText(isRecord(message) ? contentToText(message.content) : "");
 
   const contentLines = [
-    ...renderToolResultHeader(command, timeout),
+    ...renderToolResultHeader(label, command, timeout),
     "",
     ...styleMultiline(output || "(no output)", style.gray),
   ];
@@ -247,15 +248,34 @@ function renderToolResult(
   ];
 }
 
-function renderToolResultHeader(command: string, timeout: string): string[] {
+function renderToolResultHeader(label: string, command: string, timeout: string | undefined): string[] {
   const commandLines = command.split("\n");
   const lastIndex = commandLines.length - 1;
 
   return commandLines.map((line, index) => {
-    const prefix = index === 0 ? `${style.bold(style.toolTitle("bash"))} ` : "     ";
-    const suffix = index === lastIndex ? ` ${style.gray(`(timeout: ${timeout})`)}` : "";
+    const prefix = index === 0 ? `${style.bold(style.toolTitle(label))} ` : " ".repeat(label.length + 1);
+    const suffix = index === lastIndex && timeout !== undefined ? ` ${style.gray(`(timeout: ${timeout})`)}` : "";
     return `${prefix}${style.toolTitle(line.length > 0 ? line : " ")}${suffix}`;
   });
+}
+
+function summarizeToolCall(name: string, args: UnknownRecord | undefined): string {
+  if (!args) return name;
+  if (name === "bash" && typeof args.command === "string") return args.command;
+  if ((name === "read" || name === "write" || name === "edit" || name === "ls") && typeof args.path === "string") {
+    return args.path;
+  }
+  if (name === "find" && typeof args.pattern === "string") {
+    return `${args.pattern}${typeof args.path === "string" ? ` in ${args.path}` : ""}`;
+  }
+  if (name === "grep" && typeof args.pattern === "string") {
+    return `/${args.pattern}/${typeof args.path === "string" ? ` in ${args.path}` : ""}`;
+  }
+  try {
+    return JSON.stringify(args);
+  } catch {
+    return name;
+  }
 }
 
 function sanitizeToolResultText(text: string): string {

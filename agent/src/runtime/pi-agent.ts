@@ -8,6 +8,14 @@ import {
 import { getEnvApiKey, type Model, type Transport } from "@earendil-works/pi-ai";
 import { getOAuthApiKey, getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { createBashTool } from "../tools/bash/tool.js";
+import {
+  createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool,
+} from "../tools/file/index.js";
 import { randomUUID } from "node:crypto";
 
 import { AuthStore } from "./auth-store.js";
@@ -51,7 +59,15 @@ export class PiSquaredAgentRuntime {
     this.apiKey = options.apiKey;
     this.sessionId = options.sessionId ?? randomUUID();
     this.cwd = options.cwd ?? process.cwd();
-    this.tools = [createBashTool(this.cwd)];
+    this.tools = [
+      createBashTool(this.cwd),
+      createReadTool(this.cwd),
+      createEditTool(this.cwd),
+      createFindTool(this.cwd),
+      createGrepTool(this.cwd),
+      createLsTool(this.cwd),
+      createWriteTool(this.cwd),
+    ];
     this.guidelines = options.guidelines;
     this.extraContextFiles = options.extraContextFiles;
     this.systemPromptOverride = options.systemPrompt;
