@@ -52,6 +52,7 @@ async function main(): Promise<void> {
     systemPrompt: options.systemPrompt,
     authStore,
     cwd,
+    webSearch: config.search,
   };
 
   const runtime = new PiSquaredAgentRuntime(runtimeOptions);

@@ -11,9 +11,16 @@ export interface PersistedModelConfig {
   id: string;
 }
 
+export interface PersistedSearchConfig {
+  model?: string;
+  maxSources?: number;
+  timeoutMs?: number;
+}
+
 export interface ConfigFileShape {
   model?: PersistedModelConfig;
   thinking?: ThinkingLevel;
+  search?: PersistedSearchConfig;
 }
 
 export interface ConfigStoreOptions {
@@ -69,6 +76,10 @@ export class ConfigStore {
     return this.cache.thinking;
   }
 
+  getSearchConfig(): PersistedSearchConfig | undefined {
+    return this.cache.search ? { ...this.cache.search } : undefined;
+  }
+
   async setModel(provider: string, id: string): Promise<void> {
     await this.update({ model: { provider, id } });
   }
@@ -79,6 +90,10 @@ export class ConfigStore {
 
   async setModelAndThinking(provider: string, id: string, thinking: ThinkingLevel): Promise<void> {
     await this.update({ model: { provider, id }, thinking });
+  }
+
+  async setSearchConfig(search: PersistedSearchConfig): Promise<void> {
+    await this.update({ search });
   }
 
   private async update(patch: ConfigFileShape): Promise<void> {
@@ -106,6 +121,7 @@ function cloneConfig(config: ConfigFileShape): ConfigFileShape {
   return {
     ...(config.model ? { model: { ...config.model } } : {}),
     ...(config.thinking ? { thinking: config.thinking } : {}),
+    ...(config.search ? { search: { ...config.search } } : {}),
   };
 }
 
@@ -121,6 +137,9 @@ function sanitize(value: unknown): ConfigFileShape {
   if (isThinkingLevel(record.thinking)) {
     config.thinking = record.thinking;
   }
+
+  const search = sanitizeSearchConfig(record.search);
+  if (search) config.search = search;
 
   return config;
 }
@@ -138,6 +157,28 @@ function isModelConfig(value: unknown): value is PersistedModelConfig {
 
 function isThinkingLevel(value: unknown): value is ThinkingLevel {
   return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+function sanitizeSearchConfig(value: unknown): PersistedSearchConfig | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const search: PersistedSearchConfig = {};
+
+  if (typeof record.model === "string" && record.model.trim().length > 0) {
+    search.model = record.model.trim();
+  }
+  if (isPositiveNumber(record.maxSources)) {
+    search.maxSources = Math.floor(record.maxSources);
+  }
+  if (isPositiveNumber(record.timeoutMs)) {
+    search.timeoutMs = Math.floor(record.timeoutMs);
+  }
+
+  return Object.keys(search).length > 0 ? search : undefined;
+}
+
+function isPositiveNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 function isNotFound(error: unknown): boolean {

@@ -16,6 +16,7 @@ import {
   createReadTool,
   createWriteTool,
 } from "../tools/file/index.js";
+import { createSearchWebTool, type SearchWebAuth, type SearchWebToolConfig } from "../tools/web/index.js";
 import { randomUUID } from "node:crypto";
 
 import { AuthStore } from "./auth-store.js";
@@ -37,6 +38,8 @@ export interface PiSquaredAgentRuntimeOptions {
   guidelines?: string[] | undefined;
   /** Extra context file paths (relative to cwd) to inject into the system prompt. */
   extraContextFiles?: string[] | undefined;
+  /** Configuration for the search_web tool. */
+  webSearch?: SearchWebToolConfig | undefined;
 }
 
 export class PiSquaredAgentRuntime {
@@ -48,6 +51,7 @@ export class PiSquaredAgentRuntime {
   private apiKey: string | undefined;
   private sessionId: string;
   private readonly tools: AgentTool<any>[];
+  private webSearchConfig: SearchWebToolConfig;
   private readonly cwd: string;
   private readonly guidelines: string[] | undefined;
   private readonly extraContextFiles: string[] | undefined;
@@ -59,6 +63,7 @@ export class PiSquaredAgentRuntime {
     this.apiKey = options.apiKey;
     this.sessionId = options.sessionId ?? randomUUID();
     this.cwd = options.cwd ?? process.cwd();
+    this.webSearchConfig = { ...(options.webSearch ?? {}) };
     this.tools = [
       createBashTool(this.cwd),
       createReadTool(this.cwd),
@@ -67,6 +72,7 @@ export class PiSquaredAgentRuntime {
       createGrepTool(this.cwd),
       createLsTool(this.cwd),
       createWriteTool(this.cwd),
+      this.createSearchWebRuntimeTool(),
     ];
     this.guidelines = options.guidelines;
     this.extraContextFiles = options.extraContextFiles;
@@ -229,6 +235,24 @@ export class PiSquaredAgentRuntime {
     });
   }
 
+  getWebSearchConfig(): SearchWebToolConfig {
+    return { ...this.webSearchConfig };
+  }
+
+  setWebSearchConfig(config: SearchWebToolConfig): void {
+    if (this.isBusy) {
+      throw new Error("Cannot replace search configuration while the agent is responding.");
+    }
+    this.webSearchConfig = { ...config };
+    const index = this.tools.findIndex((tool) => tool.name === "search_web");
+    const tool = this.createSearchWebRuntimeTool();
+    if (index >= 0) this.tools[index] = tool;
+    else this.tools.push(tool);
+    this.status.update((draft) => {
+      draft.currentEvent = "search_config_replace";
+    });
+  }
+
   setLastError(error: string | undefined): void {
     this.status.update((draft) => {
       draft.phase = error ? "error" : draft.phase;
@@ -278,6 +302,37 @@ export class PiSquaredAgentRuntime {
     const storedKey = this.authStore.getApiKey(provider);
     if (storedKey) return storedKey;
     return this.apiKey ?? getEnvApiKey(provider);
+  }
+
+  private createSearchWebRuntimeTool(): AgentTool<any> {
+    return createSearchWebTool({ ...this.webSearchConfig, getAuth: () => this.resolveSearchWebAuth() });
+  }
+
+  /** Resolve ChatGPT/Codex OAuth credentials used by the search_web tool. */
+  private async resolveSearchWebAuth(): Promise<SearchWebAuth> {
+    const provider = "openai-codex";
+    await this.authStore.load();
+    const credentials = this.authStore.getAllOAuth();
+    if (!credentials[provider]) {
+      throw new Error("search_web requires ChatGPT/Codex OAuth credentials. Run /login openai-codex first.");
+    }
+
+    const result = await getOAuthApiKey(provider, credentials);
+    if (!result) {
+      throw new Error("search_web requires ChatGPT/Codex OAuth credentials. Run /login openai-codex first.");
+    }
+
+    const stored = credentials[provider];
+    if (stored && stored.access !== result.newCredentials.access) {
+      await this.authStore.setOAuth(provider, result.newCredentials);
+    }
+
+    const accountId = getOpenAICodexAccountId(result.newCredentials) ?? extractOpenAICodexAccountId(result.apiKey);
+    if (!accountId) {
+      throw new Error("search_web credentials are missing a ChatGPT account id. Run /login openai-codex again.");
+    }
+
+    return { accessToken: result.apiKey, accountId };
   }
 
   /**
@@ -340,5 +395,28 @@ export class PiSquaredAgentRuntime {
       draft.lastError = this.agent.state.errorMessage;
       draft.currentEvent = currentEvent;
     });
+  }
+}
+
+function getOpenAICodexAccountId(credentials: Record<string, unknown>): string | undefined {
+  const accountId = credentials.accountId;
+  return typeof accountId === "string" && accountId.length > 0 ? accountId : undefined;
+}
+
+function extractOpenAICodexAccountId(accessToken: string): string | undefined {
+  const payload = decodeJwtPayload(accessToken);
+  const auth = payload?.["https://api.openai.com/auth"];
+  if (!auth || typeof auth !== "object") return undefined;
+  const accountId = (auth as Record<string, unknown>).chatgpt_account_id;
+  return typeof accountId === "string" && accountId.length > 0 ? accountId : undefined;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | undefined {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return undefined;
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
   }
 }

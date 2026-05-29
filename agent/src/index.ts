@@ -37,6 +37,7 @@ export {
   type ConfigFileShape,
   type ConfigStoreOptions,
   type PersistedModelConfig,
+  type PersistedSearchConfig,
 } from "./runtime/config-store.js";
 export { runInteractive, type InteractiveOptions } from "./tui/interactive.js";
 export {
@@ -63,3 +64,12 @@ export {
   type LsToolInput,
   type WriteToolInput,
 } from "./tools/file/index.js";
+export {
+  createSearchWebTool,
+  type SearchWebAuth,
+  type SearchWebSource,
+  type SearchWebToolConfig,
+  type SearchWebToolDetails,
+  type SearchWebToolInput,
+  type SearchWebToolOptions,
+} from "./tools/web/index.js";

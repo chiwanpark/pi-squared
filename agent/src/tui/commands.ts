@@ -13,7 +13,7 @@ import type { AutocompleteItem, SlashCommand, TUI } from "@earendil-works/pi-tui
 import { Sequence as OscSequence } from "@tsports/go-osc52";
 
 import type { AuthStore } from "../runtime/auth-store.js";
-import type { ConfigStore } from "../runtime/config-store.js";
+import type { ConfigStore, PersistedSearchConfig } from "../runtime/config-store.js";
 import type { ChatScreen } from "./chat-screen.js";
 import type { PiSquaredAgentRuntime } from "../runtime/pi-agent.js";
 import {
@@ -24,6 +24,12 @@ import {
   listProvidersForSelection,
   normalizeThinkingLevel,
 } from "../runtime/model-resolver.js";
+import {
+  DEFAULT_MAX_SOURCES,
+  DEFAULT_SEARCH_MODEL,
+  DEFAULT_SEARCH_TIMEOUT_MS,
+  MAX_ALLOWED_SOURCES,
+} from "../tools/web/index.js";
 import { showInfo, showPrompt, showSelect } from "./overlays.js";
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
@@ -67,6 +73,7 @@ export function createCommands(authStore?: AuthStore, configStore?: ConfigStore)
     quitCommand("exit"),
     modelCommand(authStore, configStore),
     thinkingCommand(configStore),
+    searchCommand(configStore),
     loginCommand(),
     logoutCommand(),
   ];
@@ -111,6 +118,7 @@ function helpCommand(): CommandDefinition {
         "/quit, /exit          leave the chat",
         "/model [ref]          switch model (e.g. anthropic/claude-sonnet-4-5)",
         "/thinking [level]     off | minimal | low | medium | high | xhigh",
+        "/search              configure search_web defaults",
         "/login [provider]     authenticate via OAuth (Anthropic, ChatGPT, GitHub Copilot)",
         "/logout [provider]    clear OAuth credentials",
         "",
@@ -223,6 +231,259 @@ function thinkingCommand(configStore?: ConfigStore): CommandDefinition {
       }
     },
   };
+}
+
+function searchCommand(configStore?: ConfigStore): CommandDefinition {
+  return {
+    command: {
+      name: "search",
+      description: "Configure search_web defaults",
+    },
+    async execute(args, ctx) {
+      const trimmed = args.trim();
+      if (trimmed.length === 0) {
+        await showSearchConfigMenu(ctx, configStore);
+        return;
+      }
+
+      // Keep the old argument form working for users who already have it in muscle memory,
+      // but the command now advertises and defaults to the interactive menu above.
+      await applySearchConfigFromArgs(trimmed, ctx, configStore);
+    },
+  };
+}
+
+async function showSearchConfigMenu(ctx: CommandContext, configStore?: ConfigStore): Promise<void> {
+  const config = ctx.runtime.getWebSearchConfig();
+  const selected = await showSelect(ctx.screen, {
+    title: "Search Configuration",
+    items: [
+      {
+        value: "model",
+        label: "Model",
+        description: searchConfigDescription(config.model, DEFAULT_SEARCH_MODEL),
+      },
+      {
+        value: "max-sources",
+        label: "Max sources",
+        description: searchConfigDescription(config.maxSources, DEFAULT_MAX_SOURCES),
+      },
+      {
+        value: "timeout",
+        label: "Timeout",
+        description: searchConfigDescription(
+          config.timeoutMs === undefined ? undefined : `${config.timeoutMs}ms`,
+          `${DEFAULT_SEARCH_TIMEOUT_MS}ms`,
+        ),
+      },
+      {
+        value: "reset",
+        label: "Reset to defaults",
+        description: `model ${DEFAULT_SEARCH_MODEL}, ${DEFAULT_MAX_SOURCES} sources, ${DEFAULT_SEARCH_TIMEOUT_MS}ms`,
+      },
+    ],
+  });
+
+  if (!selected) return;
+  if (selected === "model") {
+    await configureSearchModel(ctx, configStore);
+  } else if (selected === "max-sources") {
+    await configureSearchMaxSources(ctx, configStore);
+  } else if (selected === "timeout") {
+    await configureSearchTimeout(ctx, configStore);
+  } else if (selected === "reset") {
+    await applySearchConfig(ctx, {}, configStore, "Search configuration reset to defaults.");
+  }
+}
+
+async function configureSearchModel(ctx: CommandContext, configStore?: ConfigStore): Promise<void> {
+  const current = ctx.runtime.getWebSearchConfig().model ?? DEFAULT_SEARCH_MODEL;
+  const selected = await showSelect(ctx.screen, {
+    title: "Search model",
+    items: [
+      { value: "default", label: DEFAULT_SEARCH_MODEL, description: "default" },
+      { value: "custom", label: "Custom model…", description: `current: ${current}` },
+    ],
+  });
+  if (!selected) return;
+
+  const next: PersistedSearchConfig = { ...ctx.runtime.getWebSearchConfig() };
+  if (selected === "default") {
+    delete next.model;
+    await applySearchConfig(ctx, next, configStore, `Search model reset to default (${DEFAULT_SEARCH_MODEL}).`);
+    return;
+  }
+
+  const model = await showPrompt(ctx.screen, {
+    title: "Custom search model",
+    message: `Current model: ${current}`,
+    allowEmpty: false,
+  });
+  if (model === undefined) return;
+
+  const value = model.trim();
+  if (value === DEFAULT_SEARCH_MODEL) delete next.model;
+  else next.model = value;
+  await applySearchConfig(ctx, next, configStore, `Search model set to ${value}.`);
+}
+
+async function configureSearchMaxSources(ctx: CommandContext, configStore?: ConfigStore): Promise<void> {
+  const selected = await showSelect(ctx.screen, {
+    title: "Search max sources",
+    items: [
+      { value: "default", label: `${DEFAULT_MAX_SOURCES}`, description: "default" },
+      ...Array.from({ length: MAX_ALLOWED_SOURCES }, (_, index) => index + 1)
+        .filter((value) => value !== DEFAULT_MAX_SOURCES)
+        .map((value) => ({ value: String(value), label: String(value) })),
+    ],
+  });
+  if (!selected) return;
+
+  const next: PersistedSearchConfig = { ...ctx.runtime.getWebSearchConfig() };
+  if (selected === "default") {
+    delete next.maxSources;
+    await applySearchConfig(ctx, next, configStore, `Search max sources reset to default (${DEFAULT_MAX_SOURCES}).`);
+    return;
+  }
+
+  const maxSources = parsePositiveInteger(selected);
+  if (!maxSources) return;
+  next.maxSources = maxSources;
+  await applySearchConfig(ctx, next, configStore, `Search max sources set to ${maxSources}.`);
+}
+
+async function configureSearchTimeout(ctx: CommandContext, configStore?: ConfigStore): Promise<void> {
+  const current = ctx.runtime.getWebSearchConfig().timeoutMs ?? DEFAULT_SEARCH_TIMEOUT_MS;
+  const presets = [30_000, 60_000, DEFAULT_SEARCH_TIMEOUT_MS, 300_000];
+  const selected = await showSelect(ctx.screen, {
+    title: "Search timeout",
+    items: [
+      { value: "default", label: `${DEFAULT_SEARCH_TIMEOUT_MS}ms`, description: "default" },
+      ...presets
+        .filter((value) => value !== DEFAULT_SEARCH_TIMEOUT_MS)
+        .map((value) => ({ value: String(value), label: `${value}ms` })),
+      { value: "custom", label: "Custom timeout…", description: `current: ${current}ms` },
+    ],
+  });
+  if (!selected) return;
+
+  const next: PersistedSearchConfig = { ...ctx.runtime.getWebSearchConfig() };
+  if (selected === "default") {
+    delete next.timeoutMs;
+    await applySearchConfig(
+      ctx,
+      next,
+      configStore,
+      `Search timeout reset to default (${DEFAULT_SEARCH_TIMEOUT_MS}ms).`,
+    );
+    return;
+  }
+
+  let timeoutMs = parsePositiveInteger(selected);
+  if (selected === "custom") {
+    const value = await showPrompt(ctx.screen, {
+      title: "Custom search timeout",
+      message: `Enter timeout in milliseconds. Current timeout: ${current}ms`,
+      allowEmpty: false,
+    });
+    if (value === undefined) return;
+    timeoutMs = parsePositiveInteger(value.trim());
+    if (!timeoutMs) {
+      ctx.runtime.setNotice("Search timeout must be a positive integer in milliseconds.", "warn");
+      return;
+    }
+  }
+  if (!timeoutMs) return;
+
+  if (timeoutMs === DEFAULT_SEARCH_TIMEOUT_MS) delete next.timeoutMs;
+  else next.timeoutMs = timeoutMs;
+  await applySearchConfig(ctx, next, configStore, `Search timeout set to ${timeoutMs}ms.`);
+}
+
+async function applySearchConfigFromArgs(
+  trimmed: string,
+  ctx: CommandContext,
+  configStore?: ConfigStore,
+): Promise<void> {
+  const [rawSetting, ...valueParts] = trimmed.split(/\s+/);
+  const setting = normalizeSearchSetting(rawSetting ?? "");
+  if (setting === "reset") {
+    await applySearchConfig(ctx, {}, configStore, "Search configuration reset to defaults.");
+    return;
+  }
+
+  const value = valueParts.join(" ").trim();
+  if (value.length === 0) {
+    ctx.runtime.setNotice(
+      "Usage: /search (or legacy: /search model <id> | max-sources <n> | timeout <ms> | reset)",
+      "warn",
+    );
+    return;
+  }
+
+  const next: PersistedSearchConfig = { ...ctx.runtime.getWebSearchConfig() };
+  if (setting === "model") {
+    next.model = value;
+    await applySearchConfig(ctx, next, configStore, `Search model set to ${value}.`);
+  } else if (setting === "max-sources") {
+    const maxSources = parsePositiveInteger(value);
+    if (!maxSources) {
+      ctx.runtime.setNotice("Search max-sources must be a positive integer.", "warn");
+      return;
+    }
+    next.maxSources = maxSources;
+    await applySearchConfig(ctx, next, configStore, `Search max sources set to ${maxSources}.`);
+  } else if (setting === "timeout") {
+    const timeoutMs = parsePositiveInteger(value);
+    if (!timeoutMs) {
+      ctx.runtime.setNotice("Search timeout must be a positive integer in milliseconds.", "warn");
+      return;
+    }
+    next.timeoutMs = timeoutMs;
+    await applySearchConfig(ctx, next, configStore, `Search timeout set to ${timeoutMs}ms.`);
+  } else {
+    ctx.runtime.setNotice(`Unknown search setting '${rawSetting}'.`, "warn");
+  }
+}
+
+function searchConfigDescription(value: string | number | undefined, defaultValue: string | number): string {
+  return value === undefined ? `default: ${defaultValue}` : `current: ${value}`;
+}
+
+function normalizeSearchSetting(value: string): "model" | "max-sources" | "timeout" | "reset" | undefined {
+  switch (value) {
+    case "model":
+      return "model";
+    case "max-sources":
+    case "maxSources":
+    case "sources":
+      return "max-sources";
+    case "timeout":
+    case "timeout-ms":
+    case "timeoutMs":
+      return "timeout";
+    case "reset":
+      return "reset";
+    default:
+      return undefined;
+  }
+}
+
+async function applySearchConfig(
+  ctx: CommandContext,
+  config: PersistedSearchConfig,
+  configStore: ConfigStore | undefined,
+  notice: string,
+): Promise<void> {
+  ctx.runtime.setWebSearchConfig(config);
+  await configStore?.setSearchConfig(config);
+  ctx.runtime.setNotice(notice, "info");
+}
+
+function parsePositiveInteger(value: string): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Math.floor(parsed);
 }
 
 function loginCommand(): CommandDefinition {

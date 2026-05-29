@@ -26,7 +26,7 @@ describe("slash commands", () => {
   it("registers the expected core commands", () => {
     const names = createCommands().map((def) => def.command.name);
     expect(names).toEqual(
-      expect.arrayContaining(["help", "new", "quit", "exit", "model", "thinking", "login", "logout"]),
+      expect.arrayContaining(["help", "new", "quit", "exit", "model", "thinking", "search", "login", "logout"]),
     );
   });
 
@@ -51,6 +51,62 @@ describe("slash commands", () => {
 
       expect(configStore.getModel()).toEqual({ provider: "anthropic", id: model.id });
       expect(configStore.getThinkingLevel()).toBe(runtime.status.getSnapshot().thinkingLevel);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("persists search configuration changes", async () => {
+    const { authStore, configStore, runtime, cleanup } = await createCommandFixture();
+    try {
+      const registry = buildRegistry(createCommands(authStore, configStore));
+      const ctx = createCommandContext(runtime);
+
+      await registry.execute("/search model gpt-test", ctx);
+      await registry.execute("/search max-sources 8", ctx);
+      await registry.execute("/search timeout 30000", ctx);
+
+      expect(runtime.getWebSearchConfig()).toEqual({ model: "gpt-test", maxSources: 8, timeoutMs: 30_000 });
+      expect(configStore.getSearchConfig()).toEqual({ model: "gpt-test", maxSources: 8, timeoutMs: 30_000 });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("updates search configuration through the selection menu", async () => {
+    const { authStore, configStore, runtime, cleanup } = await createCommandFixture();
+    try {
+      const registry = buildRegistry(createCommands(authStore, configStore));
+      const { ctx, panels } = createInteractiveCommandContext(runtime);
+
+      const executed = registry.execute("/search", ctx);
+      await waitForPanels(panels, 1);
+      panels[0]?.handleInput("\u001b[B");
+      panels[0]?.handleInput("\r");
+
+      await waitForPanels(panels, 2);
+      for (let i = 0; i < 7; i += 1) panels[1]?.handleInput("\u001b[B");
+      panels[1]?.handleInput("\r");
+      await executed;
+
+      expect(runtime.getWebSearchConfig()).toEqual({ maxSources: 8 });
+      expect(configStore.getSearchConfig()).toEqual({ maxSources: 8 });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("resets search configuration", async () => {
+    const { authStore, configStore, runtime, cleanup } = await createCommandFixture();
+    try {
+      const registry = buildRegistry(createCommands(authStore, configStore));
+      const ctx = createCommandContext(runtime);
+
+      await registry.execute("/search model gpt-test", ctx);
+      await registry.execute("/search reset", ctx);
+
+      expect(runtime.getWebSearchConfig()).toEqual({});
+      expect(configStore.getSearchConfig()).toBeUndefined();
     } finally {
       await cleanup();
     }
@@ -86,4 +142,34 @@ function createCommandContext(runtime: PiSquaredAgentRuntime): CommandContext {
     runtime,
     requestExit() {},
   };
+}
+
+function createInteractiveCommandContext(runtime: PiSquaredAgentRuntime): {
+  ctx: CommandContext;
+  panels: Exclude<Parameters<CommandContext["screen"]["setPanel"]>[0], null>[];
+} {
+  const panels: Exclude<Parameters<CommandContext["screen"]["setPanel"]>[0], null>[] = [];
+  const ctx: CommandContext = {
+    tui: {} as CommandContext["tui"],
+    screen: {
+      editor: { setText() {} },
+      setPanel(panel: Parameters<CommandContext["screen"]["setPanel"]>[0]) {
+        if (panel) panels.push(panel);
+      },
+    } as unknown as CommandContext["screen"],
+    runtime,
+    requestExit() {},
+  };
+  return { ctx, panels };
+}
+
+async function waitForPanels(
+  panels: Exclude<Parameters<CommandContext["screen"]["setPanel"]>[0], null>[],
+  count: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (panels.length >= count) return;
+    await Promise.resolve();
+  }
+  throw new Error(`Timed out waiting for ${count} panel(s); saw ${panels.length}.`);
 }
