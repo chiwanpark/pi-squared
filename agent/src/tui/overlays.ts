@@ -7,7 +7,7 @@ import {
   type SelectListTheme,
 } from "@earendil-works/pi-tui";
 
-import { style } from "./theme.js";
+import { applyEditorSurfaceBackground, style } from "./theme.js";
 import type { ChatScreen } from "./chat-screen.js";
 
 const SELECT_THEME: SelectListTheme = {
@@ -18,8 +18,29 @@ const SELECT_THEME: SelectListTheme = {
   noMatch: style.yellow,
 };
 
+const PANEL_PADDING_X = 1;
+const PANEL_PADDING_Y = 1;
+
 function panelSeparator(width: number): string {
   return style.border("─".repeat(Math.max(1, width)));
+}
+
+function panelContentWidth(width: number): number {
+  return Math.max(1, width - PANEL_PADDING_X * 2);
+}
+
+function padPanelContentLine(line: string, width: number): string {
+  return `${" ".repeat(PANEL_PADDING_X)}${truncateToWidth(line, panelContentWidth(width), "")}`;
+}
+
+function renderPaddedEditorSurfacePanel(width: number, bodyLines: string[]): string[] {
+  const verticalPadding = Array.from({ length: PANEL_PADDING_Y }, () => applyEditorSurfaceBackground("", width));
+  return [
+    applyEditorSurfaceBackground(panelSeparator(width), width),
+    ...verticalPadding,
+    ...bodyLines.map((line) => applyEditorSurfaceBackground(padPanelContentLine(line, width), width)),
+    ...verticalPadding,
+  ];
 }
 
 export interface SelectOverlayOptions {
@@ -52,14 +73,15 @@ export function showSelect(screen: ChatScreen, options: SelectOverlayOptions): P
     list.onCancel = () => finish(undefined);
 
     screen.setPanel({
+      placement: "belowEditor",
       render(width) {
-        return [
-          panelSeparator(width),
-          truncateToWidth(` ${style.bold(options.title)}`, width, ""),
-          truncateToWidth(style.gray(" ↑↓ navigate • enter select • esc cancel"), width, ""),
+        const contentWidth = panelContentWidth(width);
+        return renderPaddedEditorSurfacePanel(width, [
+          style.bold(options.title),
+          style.gray("↑↓ navigate • enter select • esc cancel"),
           "",
-          ...list.render(width),
-        ];
+          ...list.render(contentWidth),
+        ]);
       },
       handleInput(data) {
         list.handleInput(data);
@@ -103,18 +125,18 @@ export function showPrompt(screen: ChatScreen, options: PromptOverlayOptions): P
     if (options.placeholder) input.setValue("");
 
     screen.setPanel({
+      placement: "belowEditor",
       render(width) {
-        const lines: string[] = [panelSeparator(width), truncateToWidth(` ${style.bold(options.title)}`, width, "")];
+        const contentWidth = panelContentWidth(width);
+        const lines: string[] = [style.bold(options.title)];
         if (options.message) {
-          for (const chunk of wrapTextWithAnsi(options.message, Math.max(1, width - 2))) {
-            lines.push(truncateToWidth(` ${chunk}`, width, ""));
+          for (const chunk of wrapTextWithAnsi(options.message, contentWidth)) {
+            lines.push(chunk);
           }
         }
-        lines.push(truncateToWidth(style.gray(" enter submit • esc cancel"), width, ""), "");
-        for (const line of input.render(Math.max(1, width - 2))) {
-          lines.push(truncateToWidth(` ${line}`, width, ""));
-        }
-        return lines;
+        lines.push(style.gray("enter submit • esc cancel"), "");
+        lines.push(...input.render(contentWidth));
+        return renderPaddedEditorSurfacePanel(width, lines);
       },
       handleInput(data) {
         input.handleInput(data);

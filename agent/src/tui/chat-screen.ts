@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 export interface ScreenPanel {
+  placement?: "aboveEditor" | "belowEditor";
   render(width: number): string[];
   handleInput(data: string): void;
   invalidate(): void;
@@ -21,7 +22,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { contentToText, isAssistantError, messageRole, messageToMarkdownBlocks } from "../runtime/messages.js";
 import type { PiSquaredAgentRuntime } from "../runtime/pi-agent.js";
 import type { AgentStatusSnapshot } from "../runtime/status-store.js";
-import { editorTheme, markdownTheme, style } from "./theme.js";
+import { applyEditorSurfaceBackground, editorTheme, markdownTheme, style } from "./theme.js";
 
 export interface ChatScreenOptions {
   onSubmit: (text: string) => void;
@@ -64,13 +65,18 @@ export class ChatScreen implements Component {
     const editorLines = this.editor
       .render(safeWidth)
       .map((line) => (line.includes(EDITOR_BORDER_MARKER) ? "" : line))
-      .map((line) => applyEditorBackground(line, safeWidth));
+      .map((line) => applyEditorSurfaceBackground(line, safeWidth));
+    if (isSlashCommandMenuOpen(this.editor)) {
+      editorLines.push(applyEditorSurfaceBackground("", safeWidth));
+    }
     const footer = this.renderFooter(safeWidth, snapshot);
     const messageLines = this.renderMessages(safeWidth, snapshot);
     const errorLines = this.renderError(safeWidth, snapshot.lastError);
     const panelLines = this.panel
       ? this.panel.render(safeWidth).map((line) => truncateToWidth(line, safeWidth, ""))
       : [];
+    const aboveEditorPanelLines = this.panel?.placement === "belowEditor" ? [] : panelLines;
+    const belowEditorPanelLines = this.panel?.placement === "belowEditor" ? panelLines : [];
 
     // Emit the full message history rather than slicing to the visible viewport.
     // Truncating here would prevent older lines from ever being written to the
@@ -83,7 +89,15 @@ export class ChatScreen implements Component {
     // not re-run Markdown/tool-output rendering for the entire history on every
     // keystroke. Keep per-section truncation instead of a final whole-screen map
     // to avoid walking huge transcripts just because the input line changed.
-    return [...messageLines, ...errorLines, ...panelLines, ...editorLines, ...footer, ""];
+    return [
+      ...messageLines,
+      ...errorLines,
+      ...aboveEditorPanelLines,
+      ...editorLines,
+      ...belowEditorPanelLines,
+      ...footer,
+      "",
+    ];
   }
 
   handleInput(data: string): void {
@@ -145,6 +159,15 @@ export class ChatScreen implements Component {
     this.messageRenderCache = { width, updatedAt: snapshot.updatedAt, lines: renderedLines };
     return renderedLines;
   }
+}
+
+function isSlashCommandMenuOpen(editor: Editor): boolean {
+  if (!editor.isShowingAutocomplete()) return false;
+
+  const cursor = editor.getCursor();
+  const line = editor.getLines()[cursor.line] ?? "";
+  const textBeforeCursor = line.slice(0, cursor.col);
+  return textBeforeCursor.startsWith("/") && !textBeforeCursor.includes(" ");
 }
 
 function formatPhase(phase: string): string {
@@ -504,17 +527,6 @@ function applyLineBackground(line: string, width: number, bgColor: (text: string
   const truncated = truncateToWidth(line, width, "");
   const padding = " ".repeat(Math.max(0, width - visibleWidth(truncated)));
   return bgColor(truncated + padding);
-}
-
-function applyEditorBackground(line: string, width: number): string {
-  const truncated = truncateToWidth(line, width, "");
-  const padding = " ".repeat(Math.max(0, width - visibleWidth(truncated)));
-  return style.bgUser(keepEditorBackgroundAfterAnsiReset(truncated + padding));
-}
-
-function keepEditorBackgroundAfterAnsiReset(text: string): string {
-  const userBackgroundOpen = style.bgUser("").replace("\u001b[49m", "");
-  return text.replace(/\u001b\[(?:0|49)m/g, (reset) => reset + userBackgroundOpen);
 }
 
 function renderMarkdownBlock(text: string, width: number, defaultTextStyle: DefaultTextStyle): string[] {

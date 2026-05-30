@@ -1,4 +1,4 @@
-import type { EditorTheme, MarkdownTheme } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, type EditorTheme, type MarkdownTheme } from "@earendil-works/pi-tui";
 
 const ESC = "\u001b[";
 
@@ -25,6 +25,17 @@ function hexToRgb(hex: string): [number, number, number] {
 
 function identity(text: string): string {
   return text;
+}
+
+function keepBackgroundAfterAnsiReset(text: string, bgColor: (text: string) => string): string {
+  const backgroundOpen = bgColor("").replace("\u001b[49m", "");
+  return text.replace(/\u001b\[(?:0|49)m/g, (reset) => reset + backgroundOpen);
+}
+
+function applyFullLineBackground(line: string, width: number, bgColor: (text: string) => string): string {
+  const truncated = truncateToWidth(line, width, "");
+  const padding = " ".repeat(Math.max(0, width - visibleWidth(truncated)));
+  return bgColor(keepBackgroundAfterAnsiReset(truncated + padding, bgColor));
 }
 
 const palette = {
@@ -98,6 +109,10 @@ export const editorTheme: EditorTheme = {
     noMatch: style.yellow,
   },
 };
+
+export function applyEditorSurfaceBackground(line: string, width: number): string {
+  return applyFullLineBackground(line, width, style.bgUser);
+}
 
 export const markdownTheme: MarkdownTheme = {
   heading: style.markdownHeading,
