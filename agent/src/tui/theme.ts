@@ -129,5 +129,5 @@ export const markdownTheme: MarkdownTheme = {
   italic: style.italic,
   strikethrough: style.strikethrough,
   underline: style.underline,
-  codeBlockIndent: "  ",
+  codeBlockIndent: "",
 };
