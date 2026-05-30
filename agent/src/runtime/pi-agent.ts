@@ -50,6 +50,7 @@ export class PiSquaredAgentRuntime {
   private model: Model<any>;
   private apiKey: string | undefined;
   private sessionId: string;
+  private readonly transportOverride: Transport | undefined;
   private readonly tools: AgentTool<any>[];
   private webSearchConfig: SearchWebToolConfig;
   private readonly cwd: string;
@@ -61,6 +62,7 @@ export class PiSquaredAgentRuntime {
     this.authStore = options.authStore ?? new AuthStore();
     this.model = this.applyOAuthModelTransforms(options.model);
     this.apiKey = options.apiKey;
+    this.transportOverride = options.transport;
     this.sessionId = options.sessionId ?? randomUUID();
     this.cwd = options.cwd ?? process.cwd();
     this.webSearchConfig = { ...(options.webSearch ?? {}) };
@@ -100,7 +102,7 @@ export class PiSquaredAgentRuntime {
       },
       getApiKey: (provider) => this.resolveApiKey(provider),
       sessionId: this.sessionId,
-      transport: options.transport ?? "auto",
+      transport: this.resolveTransportForModel(this.model),
     });
 
     this.agent.subscribe((event) => {
@@ -200,6 +202,7 @@ export class PiSquaredAgentRuntime {
     const transformed = this.applyOAuthModelTransforms(model);
     this.model = transformed;
     this.agent.state.model = transformed;
+    this.agent.transport = this.resolveTransportForModel(transformed);
     this.status.update((draft) => {
       draft.model = modelToStatus(transformed);
       draft.currentEvent = "model_replace";
@@ -335,6 +338,10 @@ export class PiSquaredAgentRuntime {
     return { accessToken: result.apiKey, accountId };
   }
 
+  private resolveTransportForModel(model: Model<any>): Transport {
+    return this.transportOverride ?? getDefaultTransportForModel(model);
+  }
+
   /**
    * Apply OAuth-driven model transformations (e.g. github-copilot baseUrl).
    */
@@ -396,6 +403,12 @@ export class PiSquaredAgentRuntime {
       draft.currentEvent = currentEvent;
     });
   }
+}
+
+function getDefaultTransportForModel(model: Model<any>): Transport {
+  // OpenAI Codex can use WebSocket when transport is "auto"; prefer HTTP SSE
+  // by default for OpenAI-family models unless callers explicitly override it.
+  return model.provider === "openai" || model.provider === "openai-codex" ? "sse" : "auto";
 }
 
 function getOpenAICodexAccountId(credentials: Record<string, unknown>): string | undefined {
