@@ -23,6 +23,7 @@ import { contentToText, isAssistantError, messageRole, messageToMarkdownBlocks }
 import type { PiSquaredAgentRuntime } from "../runtime/pi-agent.js";
 import type { AgentStatusSnapshot } from "../runtime/status-store.js";
 import { applyEditorSurfaceBackground, editorTheme, markdownTheme, style } from "./theme.js";
+import { renderWelcome } from "./welcome.js";
 
 export interface ChatScreenOptions {
   onSubmit: (text: string) => void;
@@ -152,9 +153,9 @@ export class ChatScreen implements Component {
       lines.push(...renderMessage(snapshot.streamingMessage, width, true, toolCalls));
     }
 
-    const renderedLines = (
-      lines.length === 0 ? [style.gray("Welcome to pi-squared. Type a message to start chatting.")] : lines
-    ).map((line) => truncateToWidth(line, width, ""));
+    const renderedLines = [...renderWelcome(width, snapshot, this.runtime.getCwd()), ...lines].map((line) =>
+      truncateToWidth(line, width, ""),
+    );
 
     this.messageRenderCache = { width, updatedAt: snapshot.updatedAt, lines: renderedLines };
     return renderedLines;
