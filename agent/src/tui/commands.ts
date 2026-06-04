@@ -69,6 +69,7 @@ export function createCommands(authStore?: AuthStore, configStore?: ConfigStore)
   return [
     helpCommand(),
     newSessionCommand(),
+    continueCommand(),
     quitCommand("quit"),
     quitCommand("exit"),
     modelCommand(authStore, configStore),
@@ -115,6 +116,7 @@ function helpCommand(): CommandDefinition {
       const lines = [
         "/help                 show this help",
         "/new                  clear chat and start a new session",
+        "/continue             retry the last cancelled or failed request",
         "/quit, /exit          leave the chat",
         "/model [ref]          switch model (e.g. anthropic/claude-sonnet-4-5)",
         "/thinking [level]     off | minimal | low | medium | high | xhigh",
@@ -136,6 +138,15 @@ function newSessionCommand(): CommandDefinition {
       ctx.runtime.newSession();
       ctx.screen.editor.setText("");
       ctx.runtime.setNotice("Started a new session.", "info");
+    },
+  };
+}
+
+function continueCommand(): CommandDefinition {
+  return {
+    command: { name: "continue", description: "Retry the last cancelled or failed request" },
+    async execute(_args, ctx) {
+      await ctx.runtime.continueLast();
     },
   };
 }

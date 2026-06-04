@@ -145,6 +145,41 @@ export class PiSquaredAgentRuntime {
     }
   }
 
+  async continueLast(): Promise<void> {
+    if (this.isBusy) {
+      throw new Error("The agent is already responding. Abort or wait for it to finish before continuing.");
+    }
+
+    await this.applyStatusToAgent();
+
+    const messages = [...this.agent.state.messages];
+    while (messages.length > 0 && isFailedAssistantMessage(messages[messages.length - 1])) {
+      messages.pop();
+    }
+
+    const lastMessage = messages[messages.length - 1];
+    if (!lastMessage) {
+      throw new Error("No cancelled or failed request to continue.");
+    }
+    if (!isContinuableMessage(lastMessage)) {
+      throw new Error("The last request completed successfully. There is nothing to continue.");
+    }
+
+    this.agent.state.messages = messages;
+    this.status.update((draft) => {
+      draft.phase = "streaming";
+      draft.messages = [...messages];
+      draft.lastError = undefined;
+      draft.currentEvent = "continue";
+    });
+
+    try {
+      await this.agent.continue();
+    } finally {
+      this.syncFromAgent("idle", "settled");
+    }
+  }
+
   abort(): void {
     if (!this.isBusy) return;
     this.status.update((draft) => {
@@ -409,6 +444,24 @@ function getDefaultTransportForModel(model: Model<any>): Transport {
   // OpenAI Codex can use WebSocket when transport is "auto"; prefer HTTP SSE
   // by default for OpenAI-family models unless callers explicitly override it.
   return model.provider === "openai" || model.provider === "openai-codex" ? "sse" : "auto";
+}
+
+function isContinuableMessage(message: AgentMessage): boolean {
+  const role = getMessageRole(message);
+  return role === "user" || role === "toolResult";
+}
+
+function isFailedAssistantMessage(message: AgentMessage | undefined): boolean {
+  if (!message || !isRecord(message) || message.role !== "assistant") return false;
+  return message.stopReason === "error" || message.stopReason === "aborted" || typeof message.errorMessage === "string";
+}
+
+function getMessageRole(message: AgentMessage): string | undefined {
+  return isRecord(message) && typeof message.role === "string" ? message.role : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function getOpenAICodexAccountId(credentials: Record<string, unknown>): string | undefined {

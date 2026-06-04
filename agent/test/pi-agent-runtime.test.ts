@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createAssistantMessageEventStream, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 
 import { AuthStore } from "../src/runtime/auth-store.js";
 import { getDefaultModelForProvider } from "../src/runtime/model-resolver.js";
@@ -59,4 +60,64 @@ describe("PiSquaredAgentRuntime", () => {
 
     expect(runtime.agent.transport).toBe("sse");
   });
+
+  it("continues a failed assistant turn by retrying from the previous user message", async () => {
+    const runtime = await createRuntime("anthropic");
+    let calls = 0;
+
+    runtime.agent.streamFn = (model) => {
+      calls += 1;
+      const stream = createAssistantMessageEventStream();
+      const failed = calls === 1;
+      const message = createAssistantMessage(
+        model,
+        failed ? "" : "done",
+        failed ? "error" : "stop",
+        failed ? "timeout" : undefined,
+      );
+
+      stream.push({ type: "start", partial: message });
+      if (failed) stream.push({ type: "error", reason: "error", error: message });
+      else stream.push({ type: "done", reason: "stop", message });
+      return stream;
+    };
+
+    await runtime.prompt("do it");
+
+    expect(runtime.status.getSnapshot().lastError).toBe("timeout");
+    expect(runtime.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+
+    await runtime.continueLast();
+
+    expect(calls).toBe(2);
+    expect(runtime.status.getSnapshot().lastError).toBeUndefined();
+    expect(runtime.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect((runtime.messages[1] as AssistantMessage).stopReason).toBe("stop");
+  });
 });
+
+function createAssistantMessage(
+  model: Model<any>,
+  text: string,
+  stopReason: AssistantMessage["stopReason"],
+  errorMessage?: string,
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason,
+    errorMessage,
+    timestamp: Date.now(),
+  };
+}

@@ -26,7 +26,18 @@ describe("slash commands", () => {
   it("registers the expected core commands", () => {
     const names = createCommands().map((def) => def.command.name);
     expect(names).toEqual(
-      expect.arrayContaining(["help", "new", "quit", "exit", "model", "thinking", "search", "login", "logout"]),
+      expect.arrayContaining([
+        "help",
+        "new",
+        "continue",
+        "quit",
+        "exit",
+        "model",
+        "thinking",
+        "search",
+        "login",
+        "logout",
+      ]),
     );
   });
 
