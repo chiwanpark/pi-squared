@@ -1,9 +1,20 @@
 {
-  "name": "pi-squared-agent",
+  "name": "@chiwanpark/pi-squared-agent",
   "version": "0.1.0",
   "description": "Interactive pi-squared coding agent CLI.",
   "type": "module",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chiwanpark/pi-squared.git",
+    "directory": "agent"
+  },
+  "bugs": {
+    "url": "https://github.com/chiwanpark/pi-squared/issues"
+  },
+  "homepage": "https://github.com/chiwanpark/pi-squared#readme",
   "bin": {
     "pi2": "./dist/cli.js"
   },
