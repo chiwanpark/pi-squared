@@ -2,7 +2,7 @@
   "name": "@chiwanpark/pi-squared",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@10.33.2",
+  "packageManager": "pnpm",
   "scripts": {
     "build": "pnpm --filter @chiwanpark/pi-squared-agent build",
     "typecheck": "pnpm --filter @chiwanpark/pi-squared-agent typecheck",
