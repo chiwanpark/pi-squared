@@ -1,7 +1,7 @@
 {
-  "name": "@chiwanpark/pi-squared-agent",
+  "name": "@chiwanpark/pi-squared-server",
   "version": "0.1.0",
-  "description": "Interactive pi-squared coding agent CLI.",
+  "description": "Server for collecting pi-squared agent session messages.",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -9,53 +9,44 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/chiwanpark/pi-squared.git",
-    "directory": "agent"
+    "directory": "server"
   },
   "bugs": {
     "url": "https://github.com/chiwanpark/pi-squared/issues"
   },
   "homepage": "https://github.com/chiwanpark/pi-squared#readme",
   "bin": {
-    "pi2": "./dist/cli.js"
+    "pi2-server": "./dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "build": "pnpm --filter @chiwanpark/pi-squared-protocol build && tsc -p tsconfig.json && chmod +x dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest --passWithNoTests",
+    "test": "pnpm --filter @chiwanpark/pi-squared-protocol build && vitest run --passWithNoTests",
+    "test:watch": "pnpm --filter @chiwanpark/pi-squared-protocol build && vitest --passWithNoTests",
     "start": "pnpm build && node dist/cli.js",
-    "dev": "tsx src/cli.ts",
+    "dev": "pnpm --filter @chiwanpark/pi-squared-protocol build && tsx src/cli.ts",
     "lint": "pnpm --workspace-root lint",
     "lint:fix": "pnpm --workspace-root lint:fix",
     "format": "pnpm --workspace-root format",
     "format:check": "pnpm --workspace-root format:check"
   },
-  "dependencies": {
-    "@chiwanpark/pi-squared-protocol": "workspace:*",
-    "@earendil-works/pi-agent-core": "^0.76.0",
-    "@earendil-works/pi-ai": "^0.76.0",
-    "@earendil-works/pi-tui": "^0.76.0",
-    "@tsports/go-osc52": "2.0.14-tsport",
-    "typebox": "1.1.39"
-  },
   "devDependencies": {
     "@types/node": "24.12.4",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.22.3",
     "vitest": "^4.1.7"
   },
   "engines": {
     "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "@chiwanpark/pi-squared-protocol": "workspace:*",
+    "ws": "^8.21.0"
   }
 }

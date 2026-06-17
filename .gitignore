@@ -18,6 +18,9 @@ coverage/
 *.sqlite
 *.sqlite3
 
+# pi-squared server
+sessions/
+
 # IDE
 .idea/
 .vscode/

@@ -117,7 +117,7 @@ function createAssistantMessage(
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     },
     stopReason,
-    errorMessage,
+    ...(errorMessage === undefined ? {} : { errorMessage }),
     timestamp: Date.now(),
   };
 }

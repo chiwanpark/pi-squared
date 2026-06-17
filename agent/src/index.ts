@@ -1,4 +1,5 @@
 export { PiSquaredAgentRuntime, type PiSquaredAgentRuntimeOptions } from "./runtime/pi-agent.js";
+export type { AgentMessage } from "@chiwanpark/pi-squared-protocol";
 export { createUserMessage, messageRole, messageToText, contentToText } from "./runtime/messages.js";
 export {
   AgentStatusStore,

@@ -1,6 +1,8 @@
 packages:
   - "agent"
+  - "protocol"
+  - "server"
 allowBuilds:
-  '@google/genai': true
+  "@google/genai": true
   esbuild: true
   protobufjs: true
