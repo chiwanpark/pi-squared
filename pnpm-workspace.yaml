@@ -6,3 +6,5 @@ allowBuilds:
   "@google/genai": true
   esbuild: true
   protobufjs: true
+overrides:
+  '@chiwanpark/pi-squared-agent': link:agent

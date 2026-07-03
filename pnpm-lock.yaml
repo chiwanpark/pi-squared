@@ -4,9 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@chiwanpark/pi-squared-agent': link:agent
+
 importers:
 
   .:
+    dependencies:
+      '@chiwanpark/pi-squared-agent':
+        specifier: link:agent
+        version: link:agent
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
