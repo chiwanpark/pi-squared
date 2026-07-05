@@ -44,6 +44,8 @@ export interface CommandContext {
 
 export interface CommandDefinition {
   command: SlashCommand;
+  /** Hide aliases from slash-command autocomplete while keeping them executable. */
+  hidden?: boolean;
   execute(args: string, ctx: CommandContext): Promise<void>;
 }
 
@@ -67,7 +69,6 @@ export function parseSlashCommand(text: string): ParsedCommand | null {
  */
 export function createCommands(authStore?: AuthStore, configStore?: ConfigStore): CommandDefinition[] {
   return [
-    helpCommand(),
     newSessionCommand(),
     continueCommand(),
     quitCommand("quit"),
@@ -89,13 +90,13 @@ export function buildRegistry(definitions: CommandDefinition[] = createCommands(
   const byName = new Map<string, CommandDefinition>();
   for (const def of definitions) byName.set(def.command.name, def);
   return {
-    commands: definitions.map((def) => def.command),
+    commands: definitions.filter((def) => !def.hidden).map((def) => def.command),
     async execute(text, ctx) {
       const parsed = parseSlashCommand(text);
       if (!parsed) return false;
       const def = byName.get(parsed.name);
       if (!def) {
-        ctx.runtime.setNotice(`Unknown command '/${parsed.name}'. Type /help for available commands.`, "warn");
+        ctx.runtime.setNotice(`Unknown command '/${parsed.name}'. Type / to see available commands.`, "warn");
         return true;
       }
       try {
@@ -105,28 +106,6 @@ export function buildRegistry(definitions: CommandDefinition[] = createCommands(
         ctx.runtime.setNotice(`/${parsed.name} failed: ${message}`, "error");
       }
       return true;
-    },
-  };
-}
-
-function helpCommand(): CommandDefinition {
-  return {
-    command: { name: "help", description: "Show available slash commands" },
-    async execute(_args, ctx) {
-      const lines = [
-        "/help                 show this help",
-        "/new                  clear chat and start a new session",
-        "/continue             retry the last cancelled or failed request",
-        "/quit, /exit          leave the chat",
-        "/model [ref]          switch model (e.g. anthropic/claude-sonnet-4-5)",
-        "/thinking [level]     off | minimal | low | medium | high | xhigh",
-        "/search              configure search_web defaults",
-        "/login [provider]     authenticate via OAuth (Anthropic, ChatGPT, GitHub Copilot)",
-        "/logout [provider]    clear OAuth credentials",
-        "",
-        "Pass /command with no argument to open an interactive selector.",
-      ];
-      await showInfo(ctx.screen, { title: "Slash Commands", body: lines.join("\n") }).promise;
     },
   };
 }
@@ -153,7 +132,8 @@ function continueCommand(): CommandDefinition {
 
 function quitCommand(name: "quit" | "exit"): CommandDefinition {
   return {
-    command: { name, description: name === "quit" ? "Exit pi-squared" : "Exit pi-squared (alias for /quit)" },
+    command: { name, description: "Exit pi-squared (/exit also works)" },
+    hidden: name === "exit",
     async execute(_args, ctx) {
       ctx.requestExit();
     },
@@ -175,31 +155,47 @@ function modelCommand(authStore?: AuthStore, configStore?: ConfigStore): Command
         return;
       }
 
-      const providers = await listProvidersForSelection(ctx.runtime.authStore);
-      const providerChoice = await showSelect(ctx.screen, {
-        title: "Select provider",
-        items: providers.map((entry) => ({
-          value: entry.id,
-          label: entry.id,
-          description: providerAvailabilityLabel(entry.via),
-        })),
-      });
-      if (!providerChoice) return;
-
-      const models = listModelsForProvider(providerChoice);
-      const modelChoice = await showSelect(ctx.screen, {
-        title: `Select model (${providerChoice})`,
-        items: models.map((entry) => ({
-          value: entry.id,
-          label: entry.id,
-          description: entry.reasoning ? `${entry.name} · reasoning` : entry.name,
-        })),
-      });
-      if (!modelChoice) return;
-
-      await applyModel(ctx, providerChoice, modelChoice, configStore);
+      await showModelProviderMenu(ctx, configStore);
     },
   };
+}
+
+async function showModelProviderMenu(ctx: CommandContext, configStore?: ConfigStore): Promise<void> {
+  const providers = await listProvidersForSelection(ctx.runtime.authStore);
+  const providerChoice = await showSelect(ctx.screen, {
+    title: "Select provider",
+    items: providers.map((entry) => ({
+      value: entry.id,
+      label: entry.id,
+      description: providerAvailabilityLabel(entry.via),
+    })),
+  });
+  if (!providerChoice) return;
+
+  await showProviderModelMenu(ctx, providerChoice, configStore);
+}
+
+async function showProviderModelMenu(
+  ctx: CommandContext,
+  providerChoice: string,
+  configStore?: ConfigStore,
+): Promise<void> {
+  const models = listModelsForProvider(providerChoice);
+  const modelChoice = await showSelect(ctx.screen, {
+    title: `Select model (${providerChoice})`,
+    items: models.map((entry) => ({
+      value: entry.id,
+      label: entry.id,
+      description: entry.reasoning ? `${entry.name} · reasoning` : entry.name,
+    })),
+    escapeHint: "esc provider menu",
+    onEscape: () => {
+      void showModelProviderMenu(ctx, configStore);
+    },
+  });
+  if (!modelChoice) return;
+
+  await applyModel(ctx, providerChoice, modelChoice, configStore);
 }
 
 function thinkingCommand(configStore?: ConfigStore): CommandDefinition {
@@ -307,6 +303,10 @@ async function showSearchConfigMenu(ctx: CommandContext, configStore?: ConfigSto
   }
 }
 
+function returnToSearchConfigMenu(ctx: CommandContext, configStore?: ConfigStore): void {
+  void showSearchConfigMenu(ctx, configStore);
+}
+
 async function configureSearchModel(ctx: CommandContext, configStore?: ConfigStore): Promise<void> {
   const current = ctx.runtime.getWebSearchConfig().model ?? DEFAULT_SEARCH_MODEL;
   const selected = await showSelect(ctx.screen, {
@@ -315,6 +315,8 @@ async function configureSearchModel(ctx: CommandContext, configStore?: ConfigSto
       { value: "default", label: DEFAULT_SEARCH_MODEL, description: "default" },
       { value: "custom", label: "Custom model…", description: `current: ${current}` },
     ],
+    escapeHint: "esc search menu",
+    onEscape: () => returnToSearchConfigMenu(ctx, configStore),
   });
   if (!selected) return;
 
@@ -329,6 +331,10 @@ async function configureSearchModel(ctx: CommandContext, configStore?: ConfigSto
     title: "Custom search model",
     message: `Current model: ${current}`,
     allowEmpty: false,
+    escapeHint: "esc search model menu",
+    onEscape: () => {
+      void configureSearchModel(ctx, configStore);
+    },
   });
   if (model === undefined) return;
 
@@ -347,6 +353,8 @@ async function configureSearchMaxSources(ctx: CommandContext, configStore?: Conf
         .filter((value) => value !== DEFAULT_MAX_SOURCES)
         .map((value) => ({ value: String(value), label: String(value) })),
     ],
+    escapeHint: "esc search menu",
+    onEscape: () => returnToSearchConfigMenu(ctx, configStore),
   });
   if (!selected) return;
 
@@ -375,6 +383,8 @@ async function configureSearchTimeout(ctx: CommandContext, configStore?: ConfigS
         .map((value) => ({ value: String(value), label: `${value}ms` })),
       { value: "custom", label: "Custom timeout…", description: `current: ${current}ms` },
     ],
+    escapeHint: "esc search menu",
+    onEscape: () => returnToSearchConfigMenu(ctx, configStore),
   });
   if (!selected) return;
 
@@ -396,6 +406,10 @@ async function configureSearchTimeout(ctx: CommandContext, configStore?: ConfigS
       title: "Custom search timeout",
       message: `Enter timeout in milliseconds. Current timeout: ${current}ms`,
       allowEmpty: false,
+      escapeHint: "esc search timeout menu",
+      onEscape: () => {
+        void configureSearchTimeout(ctx, configStore);
+      },
     });
     if (value === undefined) return;
     timeoutMs = parsePositiveInteger(value.trim());
@@ -497,6 +511,23 @@ function parsePositiveInteger(value: string): number | undefined {
   return Math.floor(parsed);
 }
 
+async function showLoginMenu(ctx: CommandContext): Promise<string | undefined> {
+  const oauthItems = listOAuthProviders(ctx.runtime.authStore).map((entry) => ({
+    value: `oauth:${entry.id}`,
+    label: entry.name,
+    description: entry.loggedIn ? "OAuth · already signed in" : "OAuth",
+  }));
+  const apiKeyItems = listApiKeyProviders(ctx.runtime.authStore).map((entry) => ({
+    value: `apikey:${entry.id}`,
+    label: entry.id,
+    description: entry.hasKey ? "API key · already stored" : "API key",
+  }));
+  return showSelect(ctx.screen, {
+    title: "Sign in with",
+    items: [...oauthItems, ...apiKeyItems],
+  });
+}
+
 function loginCommand(): CommandDefinition {
   return {
     command: {
@@ -514,21 +545,9 @@ function loginCommand(): CommandDefinition {
     },
     async execute(args, ctx) {
       let choice = args.trim();
-      if (choice.length === 0) {
-        const oauthItems = listOAuthProviders(ctx.runtime.authStore).map((entry) => ({
-          value: `oauth:${entry.id}`,
-          label: entry.name,
-          description: entry.loggedIn ? "OAuth · already signed in" : "OAuth",
-        }));
-        const apiKeyItems = listApiKeyProviders(ctx.runtime.authStore).map((entry) => ({
-          value: `apikey:${entry.id}`,
-          label: entry.id,
-          description: entry.hasKey ? "API key · already stored" : "API key",
-        }));
-        const selected = await showSelect(ctx.screen, {
-          title: "Sign in with",
-          items: [...oauthItems, ...apiKeyItems],
-        });
+      const choseFromMenu = choice.length === 0;
+      if (choseFromMenu) {
+        const selected = await showLoginMenu(ctx);
         if (!selected) return;
         choice = selected;
       }
@@ -539,6 +558,14 @@ function loginCommand(): CommandDefinition {
           title: `API key — ${providerId}`,
           message: `Enter your API key for ${providerId}:`,
           allowEmpty: false,
+          ...(choseFromMenu
+            ? {
+                escapeHint: "esc sign-in menu",
+                onEscape: () => {
+                  void showLoginMenu(ctx);
+                },
+              }
+            : {}),
         });
         if (key === undefined) return;
         await ctx.runtime.authStore.setApiKey(providerId, key);

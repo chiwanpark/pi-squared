@@ -160,7 +160,7 @@ The provider and model are selected automatically from available credentials:
 Saved preferences are stored in ~/.pi-squared/config.json (override: PI_SQUARED_CONFIG_FILE).
 
 Inside the TUI, type / to open the command menu. Useful commands:
-  /model, /thinking, /continue, /login, /logout, /help, /quit
+  /model, /thinking, /continue, /login, /logout, /quit
 `);
 }
 

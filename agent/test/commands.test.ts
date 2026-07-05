@@ -12,7 +12,7 @@ import { buildRegistry, createCommands, parseSlashCommand, type CommandContext }
 describe("slash commands", () => {
   it("parses commands and arguments", () => {
     expect(parseSlashCommand("not a command")).toBeNull();
-    expect(parseSlashCommand("/help")).toEqual({ name: "help", args: "" });
+    expect(parseSlashCommand("/quit")).toEqual({ name: "quit", args: "" });
     expect(parseSlashCommand("/model anthropic/claude-sonnet-4-5")).toEqual({
       name: "model",
       args: "anthropic/claude-sonnet-4-5",
@@ -25,20 +25,102 @@ describe("slash commands", () => {
 
   it("registers the expected core commands", () => {
     const names = createCommands().map((def) => def.command.name);
+    expect(names).not.toContain("help");
     expect(names).toEqual(
-      expect.arrayContaining([
-        "help",
-        "new",
-        "continue",
-        "quit",
-        "exit",
-        "model",
-        "thinking",
-        "search",
-        "login",
-        "logout",
-      ]),
+      expect.arrayContaining(["new", "continue", "quit", "exit", "model", "thinking", "search", "login", "logout"]),
     );
+  });
+
+  it("hides the /exit alias from slash autocomplete", () => {
+    const registry = buildRegistry(createCommands());
+    const names = registry.commands.map((command) => command.name);
+
+    expect(names).toContain("quit");
+    expect(names).not.toContain("exit");
+    expect(registry.commands.find((command) => command.name === "quit")?.description).toContain("/exit");
+  });
+
+  it("still executes the hidden /exit alias", async () => {
+    const { runtime, cleanup } = await createCommandFixture();
+    let requestedExit = false;
+    try {
+      const registry = buildRegistry(createCommands());
+      await registry.execute("/exit", {
+        ...createCommandContext(runtime),
+        requestExit: () => {
+          requestedExit = true;
+        },
+      });
+
+      expect(requestedExit).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("returns top-level selection-menu Esc to slash autocomplete", async () => {
+    const { authStore, configStore, runtime, cleanup } = await createCommandFixture();
+    try {
+      const registry = buildRegistry(createCommands(authStore, configStore));
+      const { ctx, panels, slashMenuOpens } = createInteractiveCommandContext(runtime);
+
+      const executed = registry.execute("/thinking", ctx);
+      await waitForPanels(panels, 1);
+      panels[0]?.handleInput("\u001b");
+      await executed;
+
+      expect(slashMenuOpens.count).toBe(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("returns nested search selection-menu Esc to the search menu", async () => {
+    const { authStore, configStore, runtime, cleanup } = await createCommandFixture();
+    try {
+      const registry = buildRegistry(createCommands(authStore, configStore));
+      const { ctx, panels, slashMenuOpens } = createInteractiveCommandContext(runtime);
+
+      const executed = registry.execute("/search", ctx);
+      await waitForPanels(panels, 1);
+      panels[0]?.handleInput("\r");
+
+      await waitForPanels(panels, 2);
+      panels[1]?.handleInput("\u001b");
+      await waitForPanels(panels, 3);
+      await executed;
+
+      expect(slashMenuOpens.count).toBe(0);
+      expect(panels[2]?.render(80).join("\n")).toContain("Search Configuration");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("returns nested search text-input Esc to the previous selection menu", async () => {
+    const { authStore, configStore, runtime, cleanup } = await createCommandFixture();
+    try {
+      const registry = buildRegistry(createCommands(authStore, configStore));
+      const { ctx, panels, slashMenuOpens } = createInteractiveCommandContext(runtime);
+
+      const executed = registry.execute("/search", ctx);
+      await waitForPanels(panels, 1);
+      panels[0]?.handleInput("\r");
+
+      await waitForPanels(panels, 2);
+      panels[1]?.handleInput("\u001b[B");
+      panels[1]?.handleInput("\r");
+
+      await waitForPanels(panels, 3);
+      panels[2]?.handleInput("\u001b");
+      await waitForPanels(panels, 4);
+      await executed;
+
+      expect(slashMenuOpens.count).toBe(0);
+      expect(panels[3]?.render(80).join("\n")).toContain("Search model");
+    } finally {
+      await cleanup();
+    }
   });
 
   it("persists thinking changes", async () => {
@@ -158,8 +240,10 @@ function createCommandContext(runtime: PiSquaredAgentRuntime): CommandContext {
 function createInteractiveCommandContext(runtime: PiSquaredAgentRuntime): {
   ctx: CommandContext;
   panels: Exclude<Parameters<CommandContext["screen"]["setPanel"]>[0], null>[];
+  slashMenuOpens: { count: number };
 } {
   const panels: Exclude<Parameters<CommandContext["screen"]["setPanel"]>[0], null>[] = [];
+  const slashMenuOpens = { count: 0 };
   const ctx: CommandContext = {
     tui: {} as CommandContext["tui"],
     screen: {
@@ -167,11 +251,14 @@ function createInteractiveCommandContext(runtime: PiSquaredAgentRuntime): {
       setPanel(panel: Parameters<CommandContext["screen"]["setPanel"]>[0]) {
         if (panel) panels.push(panel);
       },
+      openSlashMenu() {
+        slashMenuOpens.count += 1;
+      },
     } as unknown as CommandContext["screen"],
     runtime,
     requestExit() {},
   };
-  return { ctx, panels };
+  return { ctx, panels, slashMenuOpens };
 }
 
 async function waitForPanels(

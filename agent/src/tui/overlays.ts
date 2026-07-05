@@ -1,5 +1,7 @@
 import {
   Input,
+  Key,
+  matchesKey,
   SelectList,
   truncateToWidth,
   wrapTextWithAnsi,
@@ -37,7 +39,6 @@ function renderPaddedEditorSurfacePanel(width: number, bodyLines: string[]): str
   const verticalPadding = Array.from({ length: PANEL_PADDING_Y }, () => applyEditorSurfaceBackground("", width));
   return [
     applyEditorSurfaceBackground(panelSeparator(width), width),
-    ...verticalPadding,
     ...bodyLines.map((line) => applyEditorSurfaceBackground(padPanelContentLine(line, width), width)),
     ...verticalPadding,
   ];
@@ -47,11 +48,16 @@ export interface SelectOverlayOptions {
   title: string;
   items: SelectItem[];
   maxVisible?: number;
+  /** Called when the user presses Esc. Defaults to returning to the slash menu. */
+  onEscape?: () => void;
+  /** Hint text for the Esc action. Defaults based on onEscape. */
+  escapeHint?: string;
 }
 
 /**
  * Show a selectable list in the screen's inline panel area. Resolves with
- * the chosen value, or undefined if the user cancels with Esc.
+ * the chosen value, or undefined if the user cancels. Esc returns to the slash menu
+ * by default, or to options.onEscape when provided.
  */
 export function showSelect(screen: ChatScreen, options: SelectOverlayOptions): Promise<string | undefined> {
   if (options.items.length === 0) {
@@ -69,6 +75,12 @@ export function showSelect(screen: ChatScreen, options: SelectOverlayOptions): P
       resolve(value);
     };
 
+    const escape = (): void => {
+      finish(undefined);
+      if (options.onEscape) options.onEscape();
+      else screen.openSlashMenu();
+    };
+
     list.onSelect = (item) => finish(item.value);
     list.onCancel = () => finish(undefined);
 
@@ -78,12 +90,18 @@ export function showSelect(screen: ChatScreen, options: SelectOverlayOptions): P
         const contentWidth = panelContentWidth(width);
         return renderPaddedEditorSurfacePanel(width, [
           style.bold(options.title),
-          style.gray("↑↓ navigate • enter select • esc cancel"),
+          style.gray(
+            `↑↓ navigate • enter select • ${options.escapeHint ?? (options.onEscape ? "esc back" : "esc slash menu")}`,
+          ),
           "",
           ...list.render(contentWidth),
         ]);
       },
       handleInput(data) {
+        if (matchesKey(data, Key.escape)) {
+          escape();
+          return;
+        }
         list.handleInput(data);
       },
       invalidate() {
@@ -98,11 +116,16 @@ export interface PromptOverlayOptions {
   message?: string;
   placeholder?: string;
   allowEmpty?: boolean;
+  /** Called when the user presses Esc. Defaults to returning to the slash menu. */
+  onEscape?: () => void;
+  /** Hint text for the Esc action. Defaults based on onEscape. */
+  escapeHint?: string;
 }
 
 /**
  * Show a text input prompt in the screen's inline panel area. Resolves with
- * the entered text, or undefined if the user cancels with Esc.
+ * the entered text, or undefined if the user cancels. Esc returns to the slash menu
+ * by default, or to options.onEscape when provided.
  */
 export function showPrompt(screen: ChatScreen, options: PromptOverlayOptions): Promise<string | undefined> {
   return new Promise((resolve) => {
@@ -116,11 +139,17 @@ export function showPrompt(screen: ChatScreen, options: PromptOverlayOptions): P
       resolve(value);
     };
 
+    const escape = (): void => {
+      finish(undefined);
+      if (options.onEscape) options.onEscape();
+      else screen.openSlashMenu();
+    };
+
     input.onSubmit = (value) => {
       if (!options.allowEmpty && value.trim().length === 0) return;
       finish(value);
     };
-    input.onEscape = () => finish(undefined);
+    input.onEscape = () => escape();
 
     if (options.placeholder) input.setValue("");
 
@@ -134,7 +163,10 @@ export function showPrompt(screen: ChatScreen, options: PromptOverlayOptions): P
             lines.push(chunk);
           }
         }
-        lines.push(style.gray("enter submit • esc cancel"), "");
+        lines.push(
+          style.gray(`enter submit • ${options.escapeHint ?? (options.onEscape ? "esc back" : "esc slash menu")}`),
+          "",
+        );
         lines.push(...input.render(contentWidth));
         return renderPaddedEditorSurfacePanel(width, lines);
       },
