@@ -1,6 +1,6 @@
 {
   "name": "@chiwanpark/pi-squared-agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Interactive pi-squared coding agent CLI.",
   "type": "module",
   "publishConfig": {

@@ -1,6 +1,6 @@
 {
   "name": "@chiwanpark/pi-squared-protocol",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shared protocol types and validators for pi-squared packages.",
   "type": "module",
   "publishConfig": {
