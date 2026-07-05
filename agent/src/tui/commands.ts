@@ -170,12 +170,12 @@ function modelCommand(authStore?: AuthStore, configStore?: ConfigStore): Command
     },
     async execute(args, ctx) {
       if (args.length > 0) {
-        const next = resolveModelReference(args, ctx.runtime.authStore);
+        const next = await resolveModelReference(args, ctx.runtime.authStore);
         await applyModel(ctx, next.provider, next.model, configStore);
         return;
       }
 
-      const providers = listProvidersForSelection(ctx.runtime.authStore);
+      const providers = await listProvidersForSelection(ctx.runtime.authStore);
       const providerChoice = await showSelect(ctx.screen, {
         title: "Select provider",
         items: providers.map((entry) => ({
@@ -644,13 +644,16 @@ async function applyModel(
   ctx.runtime.setNotice(`Switched to ${model.provider}/${model.id}.`, "info");
 }
 
-function resolveModelReference(reference: string, authStore?: AuthStore): { provider: string; model: string } {
+async function resolveModelReference(
+  reference: string,
+  authStore?: AuthStore,
+): Promise<{ provider: string; model: string }> {
   const slash = reference.indexOf("/");
   if (slash > 0) {
     return { provider: reference.slice(0, slash), model: reference.slice(slash + 1) };
   }
   // No provider: search authenticated providers in preference order (first match wins).
-  for (const entry of listProvidersForSelection(authStore)) {
+  for (const entry of await listProvidersForSelection(authStore)) {
     try {
       const model = findModelByReference(entry.id, reference);
       return { provider: entry.id, model: model.id };
@@ -661,10 +664,10 @@ function resolveModelReference(reference: string, authStore?: AuthStore): { prov
   throw new Error(`Could not locate model '${reference}'. Use the form 'provider/model-id'.`);
 }
 
-function completeModelReference(prefix: string, authStore?: AuthStore): AutocompleteItem[] {
+async function completeModelReference(prefix: string, authStore?: AuthStore): Promise<AutocompleteItem[]> {
   const slash = prefix.indexOf("/");
   if (slash === -1) {
-    return listProvidersForSelection(authStore)
+    return (await listProvidersForSelection(authStore))
       .filter((entry) => entry.id.startsWith(prefix))
       .map((entry) => ({ value: `${entry.id}/`, label: entry.id, description: "provider" }));
   }

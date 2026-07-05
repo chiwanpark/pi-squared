@@ -5,8 +5,8 @@ import {
   type AgentTool,
   type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import { getEnvApiKey, type Model, type Transport } from "@earendil-works/pi-ai";
-import { getOAuthApiKey, getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { type Model, type SimpleStreamOptions, type Transport } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { createBashTool } from "../tools/bash/tool.js";
 import {
   createEditTool,
@@ -50,6 +50,7 @@ export class PiSquaredAgentRuntime {
   private model: Model<any>;
   private apiKey: string | undefined;
   private sessionId: string;
+  private readonly models: ReturnType<typeof builtinModels>;
   private readonly transportOverride: Transport | undefined;
   private readonly tools: AgentTool<any>[];
   private webSearchConfig: SearchWebToolConfig;
@@ -60,7 +61,8 @@ export class PiSquaredAgentRuntime {
 
   constructor(options: PiSquaredAgentRuntimeOptions) {
     this.authStore = options.authStore ?? new AuthStore();
-    this.model = this.applyOAuthModelTransforms(options.model);
+    this.models = builtinModels({ credentials: this.authStore });
+    this.model = options.model;
     this.apiKey = options.apiKey;
     this.transportOverride = options.transport;
     this.sessionId = options.sessionId ?? randomUUID();
@@ -100,7 +102,8 @@ export class PiSquaredAgentRuntime {
         messages: [],
         tools: [],
       },
-      getApiKey: (provider) => this.resolveApiKey(provider),
+      streamFn: (model, context, streamOptions) =>
+        this.models.streamSimple(model, context, this.withRuntimeStreamOptions(streamOptions)),
       sessionId: this.sessionId,
       transport: this.resolveTransportForModel(this.model),
     });
@@ -234,12 +237,11 @@ export class PiSquaredAgentRuntime {
       throw new Error("Cannot replace the model while the agent is responding.");
     }
 
-    const transformed = this.applyOAuthModelTransforms(model);
-    this.model = transformed;
-    this.agent.state.model = transformed;
-    this.agent.transport = this.resolveTransportForModel(transformed);
+    this.model = model;
+    this.agent.state.model = model;
+    this.agent.transport = this.resolveTransportForModel(model);
     this.status.update((draft) => {
-      draft.model = modelToStatus(transformed);
+      draft.model = modelToStatus(model);
       draft.currentEvent = "model_replace";
     });
   }
@@ -312,36 +314,6 @@ export class PiSquaredAgentRuntime {
     });
   }
 
-  /**
-   * Resolve an API key for a provider, preferring OAuth credentials from the
-   * auth store (refreshing if expired), then the runtime override, then env.
-   */
-  async resolveApiKey(provider: string): Promise<string | undefined> {
-    await this.authStore.load();
-    const oauthProvider = getOAuthProvider(provider);
-    if (oauthProvider) {
-      const credentials = this.authStore.getAllOAuth();
-      if (credentials[provider]) {
-        try {
-          const result = await getOAuthApiKey(provider, credentials);
-          if (result) {
-            const stored = credentials[provider];
-            if (stored && stored.access !== result.newCredentials.access) {
-              await this.authStore.setOAuth(provider, result.newCredentials);
-            }
-            return result.apiKey;
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.setNotice(`OAuth refresh failed for ${provider}: ${message}`, "error");
-        }
-      }
-    }
-    const storedKey = this.authStore.getApiKey(provider);
-    if (storedKey) return storedKey;
-    return this.apiKey ?? getEnvApiKey(provider);
-  }
-
   private createSearchWebRuntimeTool(): AgentTool<any> {
     return createSearchWebTool({ ...this.webSearchConfig, getAuth: () => this.resolveSearchWebAuth() });
   }
@@ -350,43 +322,40 @@ export class PiSquaredAgentRuntime {
   private async resolveSearchWebAuth(): Promise<SearchWebAuth> {
     const provider = "openai-codex";
     await this.authStore.load();
-    const credentials = this.authStore.getAllOAuth();
-    if (!credentials[provider]) {
+    const credential = await this.authStore.read(provider);
+    if (credential?.type !== "oauth") {
       throw new Error("search_web requires ChatGPT/Codex OAuth credentials. Run /login openai-codex first.");
     }
 
-    const result = await getOAuthApiKey(provider, credentials);
-    if (!result) {
+    const model = this.models.getModels(provider)[0];
+    if (!model) {
+      throw new Error("search_web could not resolve an OpenAI Codex model for OAuth refresh.");
+    }
+
+    const auth = await this.models.getAuth(model);
+    const accessToken = auth?.auth.apiKey;
+    if (!accessToken) {
       throw new Error("search_web requires ChatGPT/Codex OAuth credentials. Run /login openai-codex first.");
     }
 
-    const stored = credentials[provider];
-    if (stored && stored.access !== result.newCredentials.access) {
-      await this.authStore.setOAuth(provider, result.newCredentials);
-    }
-
-    const accountId = getOpenAICodexAccountId(result.newCredentials) ?? extractOpenAICodexAccountId(result.apiKey);
+    const refreshed = await this.authStore.read(provider);
+    const accountId =
+      (refreshed?.type === "oauth" ? getOpenAICodexAccountId(refreshed) : undefined) ??
+      extractOpenAICodexAccountId(accessToken);
     if (!accountId) {
       throw new Error("search_web credentials are missing a ChatGPT account id. Run /login openai-codex again.");
     }
 
-    return { accessToken: result.apiKey, accountId };
+    return { accessToken, accountId };
   }
 
   private resolveTransportForModel(model: Model<any>): Transport {
     return this.transportOverride ?? getDefaultTransportForModel(model);
   }
 
-  /**
-   * Apply OAuth-driven model transformations (e.g. github-copilot baseUrl).
-   */
-  private applyOAuthModelTransforms(model: Model<any>): Model<any> {
-    const oauthProvider = getOAuthProvider(model.provider);
-    if (!oauthProvider?.modifyModels) return model;
-    const credentials = this.authStore.getOAuth(model.provider);
-    if (!credentials) return model;
-    const [transformed] = oauthProvider.modifyModels([model], credentials);
-    return transformed ?? model;
+  private withRuntimeStreamOptions(options: SimpleStreamOptions | undefined): SimpleStreamOptions | undefined {
+    if (!this.apiKey) return options;
+    return { ...options, apiKey: this.apiKey };
   }
 
   /**

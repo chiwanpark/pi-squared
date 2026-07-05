@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   await configStore.load();
   const config = configStore.getConfig();
 
-  const resolved = resolveConfiguredModel(authStore, config.model);
+  const resolved = await resolveConfiguredModel(authStore, config.model);
   const requestedThinking = options.thinking ?? config.thinking ?? "off";
   const thinkingLevel = normalizeThinkingLevel(resolved.model, requestedThinking);
 
@@ -62,10 +62,10 @@ async function main(): Promise<void> {
   await runInteractive(interactiveOptions);
 }
 
-function resolveConfiguredModel(authStore: AuthStore, modelConfig: PersistedModelConfig | undefined) {
+async function resolveConfiguredModel(authStore: AuthStore, modelConfig: PersistedModelConfig | undefined) {
   if (!modelConfig) return resolveModel({ authStore });
   try {
-    return resolveModel({ authStore, provider: modelConfig.provider, model: modelConfig.id });
+    return await resolveModel({ authStore, provider: modelConfig.provider, model: modelConfig.id });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`Ignoring saved model configuration: ${message}`);

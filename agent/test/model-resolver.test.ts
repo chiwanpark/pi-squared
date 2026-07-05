@@ -44,16 +44,16 @@ describe("model-resolver", () => {
     expect(parseModelReference({})).toEqual({ provider: "", model: "" });
   });
 
-  it("infers anthropic when no credentials are present", () => {
-    const resolved = resolveModel({});
+  it("infers anthropic when no credentials are present", async () => {
+    const resolved = await resolveModel({});
     expect(resolved.providerWasInferred).toBe(true);
     expect(resolved.model.provider).toBe("anthropic");
     expect(resolved.apiKeyAvailable).toBe(false);
   });
 
-  it("prefers a provider with an env api key", () => {
+  it("prefers a provider with an env api key", async () => {
     process.env.OPENAI_API_KEY = "test-key";
-    const resolved = resolveModel({});
+    const resolved = await resolveModel({});
     expect(resolved.model.provider).toBe("openai");
     expect(resolved.apiKeyAvailable).toBe(true);
   });
@@ -64,7 +64,7 @@ describe("model-resolver", () => {
     try {
       const authStore = new AuthStore({ filePath: join(dir, "auth.json") });
       await authStore.setOAuth("anthropic", { refresh: "r", access: "a", expires: Date.now() + 60_000 });
-      const resolved = resolveModel({ authStore });
+      const resolved = await resolveModel({ authStore });
       expect(resolved.model.provider).toBe("anthropic");
       expect(resolved.apiKeyAvailable).toBe(true);
     } finally {
@@ -72,8 +72,8 @@ describe("model-resolver", () => {
     }
   });
 
-  it("rejects unknown providers", () => {
-    expect(() => resolveModel({ provider: "totally-not-real" })).toThrow(/Unknown provider/);
+  it("rejects unknown providers", async () => {
+    await expect(resolveModel({ provider: "totally-not-real" })).rejects.toThrow(/Unknown provider/);
   });
 
   it("rejects unknown models", () => {
@@ -92,7 +92,7 @@ describe("model-resolver", () => {
     try {
       const authStore = new AuthStore({ filePath: join(dir, "auth.json") });
       await authStore.setOAuth("anthropic", { refresh: "r", access: "a", expires: Date.now() + 60_000 });
-      const providers = listProvidersForSelection(authStore);
+      const providers = await listProvidersForSelection(authStore);
       const anthropic = providers.find((entry) => entry.id === "anthropic");
       expect(anthropic?.via).toBe("oauth");
       expect(anthropic?.supportsOAuth).toBe(true);

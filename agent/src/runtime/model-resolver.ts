@@ -1,15 +1,11 @@
-import {
-  getEnvApiKey,
-  getModels,
-  getProviders,
-  getSupportedThinkingLevels,
-  type KnownProvider,
-  type Model,
-} from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type KnownProvider, type Model } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 
 import type { AuthStore } from "./auth-store.js";
+
+const MODEL_CATALOG = builtinModels();
 
 const PROVIDER_PREFERENCE: KnownProvider[] = [
   "anthropic",
@@ -96,12 +92,12 @@ export function parseModelReference(options: ResolveModelOptions): ParsedModelRe
   return { provider, model };
 }
 
-export function resolveModel(options: ResolveModelOptions): ResolvedModel {
+export async function resolveModel(options: ResolveModelOptions): Promise<ResolvedModel> {
   const parsed = parseModelReference(options);
   const providerWasInferred = parsed.provider.length === 0;
-  const provider = providerWasInferred ? inferProvider(options.authStore) : parsed.provider;
+  const provider = providerWasInferred ? await inferProvider(options.authStore) : parsed.provider;
   const knownProvider = toKnownProvider(provider);
-  const models = getModels(knownProvider);
+  const models = getCatalogModels(knownProvider);
   const modelWasInferred = parsed.model.length === 0;
   const model = modelWasInferred
     ? pickDefaultModel(knownProvider, models)
@@ -111,7 +107,7 @@ export function resolveModel(options: ResolveModelOptions): ResolvedModel {
     model,
     providerWasInferred,
     modelWasInferred,
-    apiKeyAvailable: isProviderCredentialed(model.provider, options.authStore),
+    apiKeyAvailable: await isModelCredentialed(model, options.authStore),
   };
 }
 
@@ -122,42 +118,45 @@ export function normalizeThinkingLevel(model: Model<any>, requested: ThinkingLev
 }
 
 export function listKnownProviders(): string[] {
-  return [...getProviders()];
+  return getCatalogProviders();
 }
 
-export function listProvidersForSelection(authStore?: AuthStore): ProviderListEntry[] {
-  const oauthCreds = authStore?.getAllOAuth() ?? {};
-  const storedKeys = new Set(authStore?.listApiKeyProviderIds() ?? []);
-  const providers = getProviders();
-  const ordered = [
-    ...PROVIDER_PREFERENCE.filter((entry) => providers.includes(entry)),
-    ...providers.filter((entry) => !PROVIDER_PREFERENCE.includes(entry)),
-  ];
-  return ordered
-    .map((id) => {
-      const supportsOAuth = getOAuthProvider(id) !== undefined;
-      const hasOAuth = oauthCreds[id] !== undefined;
-      const hasStoredKey = storedKeys.has(id);
-      const hasEnv = getEnvApiKey(id) !== undefined;
-      const via: ProviderListEntry["via"] = hasOAuth ? "oauth" : hasStoredKey ? "stored-key" : hasEnv ? "env" : "none";
+export async function listProvidersForSelection(authStore?: AuthStore): Promise<ProviderListEntry[]> {
+  await authStore?.load();
+  const providers = getCatalogProviders();
+  const ordered = orderProviders(providers);
+  const modelRegistry = createModelRegistry(authStore);
+  const entries = await Promise.all(
+    ordered.map(async (id) => {
+      const provider = MODEL_CATALOG.getProvider(id);
+      const supportsOAuth = provider?.auth.oauth !== undefined || getOAuthProvider(id) !== undefined;
+      const credential = await authStore?.read(id);
+      const hasOAuth = credential?.type === "oauth";
+      const hasStoredKey = credential?.type === "api_key";
+      const hasAmbientAuth = !credential && (await hasProviderAmbientAuth(id, modelRegistry).catch(() => false));
+      const via: ProviderListEntry["via"] = hasOAuth
+        ? "oauth"
+        : hasStoredKey
+          ? "stored-key"
+          : hasAmbientAuth
+            ? "env"
+            : "none";
       return { id, supportsOAuth, available: via !== "none", via };
-    })
-    .filter((entry) => entry.available);
+    }),
+  );
+  return entries.filter((entry) => entry.available);
 }
 
 export function listApiKeyProviders(authStore?: AuthStore): ApiKeyProviderEntry[] {
   const storedKeys = new Set(authStore?.listApiKeyProviderIds() ?? []);
-  const providers = getProviders();
-  const ordered = [
-    ...PROVIDER_PREFERENCE.filter((entry) => providers.includes(entry)),
-    ...providers.filter((entry) => !PROVIDER_PREFERENCE.includes(entry)),
-  ];
-  return ordered.map((id) => ({ id, name: id, hasKey: storedKeys.has(id) }));
+  return orderProviders(getCatalogProviders())
+    .filter((id) => MODEL_CATALOG.getProvider(id)?.auth.apiKey !== undefined)
+    .map((id) => ({ id, name: id, hasKey: storedKeys.has(id) }));
 }
 
 export function listModelsForProvider(provider: string): ModelListEntry[] {
   const known = toKnownProvider(provider);
-  return getModels(known).map((model) => ({
+  return getCatalogModels(known).map((model) => ({
     id: model.id,
     name: model.name,
     provider: known,
@@ -176,21 +175,28 @@ export function listOAuthProviders(authStore?: AuthStore): OAuthProviderEntry[] 
 
 export function getDefaultModelForProvider(provider: string): Model<any> {
   const known = toKnownProvider(provider);
-  return pickDefaultModel(known, getModels(known));
+  return pickDefaultModel(known, getCatalogModels(known));
 }
 
 export function findModelByReference(provider: string, modelId: string): Model<any> {
   const known = toKnownProvider(provider);
-  return findModel(known, getModels(known), modelId);
+  return findModel(known, getCatalogModels(known), modelId);
 }
 
-function isProviderCredentialed(provider: string, authStore?: AuthStore): boolean {
-  if (authStore && authStore.getOAuth(provider)) return true;
-  if (authStore && authStore.getApiKey(provider)) return true;
-  return getEnvApiKey(provider) !== undefined;
+async function isModelCredentialed(model: Model<any>, authStore?: AuthStore): Promise<boolean> {
+  await authStore?.load();
+  const credential = await authStore?.read(model.provider);
+  if (credential) return true;
+  const modelRegistry = createModelRegistry(authStore);
+  try {
+    return (await modelRegistry.getAuth(model)) !== undefined;
+  } catch {
+    return false;
+  }
 }
 
-function inferProvider(authStore?: AuthStore): KnownProvider {
+async function inferProvider(authStore?: AuthStore): Promise<KnownProvider> {
+  await authStore?.load();
   if (authStore) {
     for (const provider of PROVIDER_PREFERENCE) {
       if (authStore.getOAuth(provider)) return provider;
@@ -199,16 +205,46 @@ function inferProvider(authStore?: AuthStore): KnownProvider {
       if (authStore.getApiKey(provider)) return provider;
     }
   }
+
+  const modelRegistry = createModelRegistry(authStore);
   for (const provider of PROVIDER_PREFERENCE) {
-    if (getEnvApiKey(provider)) return provider;
+    if (await hasProviderAmbientAuth(provider, modelRegistry).catch(() => false)) return provider;
   }
   return "anthropic";
 }
 
+async function hasProviderAmbientAuth(
+  provider: KnownProvider,
+  modelRegistry: ReturnType<typeof builtinModels>,
+): Promise<boolean> {
+  const model = pickDefaultModel(provider, getCatalogModels(provider));
+  return (await modelRegistry.getAuth(model)) !== undefined;
+}
+
+function createModelRegistry(authStore?: AuthStore): ReturnType<typeof builtinModels> {
+  return authStore ? builtinModels({ credentials: authStore }) : builtinModels();
+}
+
+function getCatalogProviders(): KnownProvider[] {
+  return MODEL_CATALOG.getProviders().map((provider) => provider.id as KnownProvider);
+}
+
+function getCatalogModels(provider: KnownProvider): Model<any>[] {
+  return [...MODEL_CATALOG.getModels(provider)];
+}
+
+function orderProviders(providers: KnownProvider[]): KnownProvider[] {
+  return [
+    ...PROVIDER_PREFERENCE.filter((entry) => providers.includes(entry)),
+    ...providers.filter((entry) => !PROVIDER_PREFERENCE.includes(entry)),
+  ];
+}
+
 function toKnownProvider(provider: string): KnownProvider {
-  const knownProvider = getProviders().find((candidate) => candidate === provider);
+  const knownProviders = getCatalogProviders();
+  const knownProvider = knownProviders.find((candidate) => candidate === provider);
   if (!knownProvider) {
-    throw new Error(`Unknown provider '${provider}'. Known providers: ${getProviders().join(", ")}`);
+    throw new Error(`Unknown provider '${provider}'. Known providers: ${knownProviders.join(", ")}`);
   }
   return knownProvider;
 }

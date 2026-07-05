@@ -1,7 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { OAuthCredentials } from "@earendil-works/pi-ai";
+import type {
+  ApiKeyCredential,
+  Credential,
+  CredentialStore,
+  OAuthCredential,
+  OAuthCredentials,
+} from "@earendil-works/pi-ai";
 
 const AUTH_FILE_ENV = "PI_SQUARED_AUTH_FILE";
 
@@ -19,10 +25,11 @@ export interface AuthStoreOptions {
  * Persisted credential store for pi-squared.
  *
  * Layout: ~/.pi-squared/auth.json (override via PI_SQUARED_AUTH_FILE).
- * Only OAuth credentials are stored here; API keys still come from the
- * environment via @earendil-works/pi-ai's getEnvApiKey.
+ * OAuth and API key credentials are stored here. The class also implements
+ * pi-ai's CredentialStore interface so provider auth can resolve credentials
+ * through the new Models API.
  */
-export class AuthStore {
+export class AuthStore implements CredentialStore {
   private readonly filePath: string;
   private cache: AuthFileShape = {};
   private loaded = false;
@@ -107,6 +114,57 @@ export class AuthStore {
 
   listApiKeyProviderIds(): string[] {
     return Object.keys(this.cache.apiKeys ?? {});
+  }
+
+  async read(providerId: string): Promise<Credential | undefined> {
+    await this.load();
+    return this.getCredentialFromCache(providerId);
+  }
+
+  async modify(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+  ): Promise<Credential | undefined> {
+    await this.load();
+    const current = this.getCredentialFromCache(providerId);
+    const next = await fn(current);
+    if (next === undefined) return current;
+    this.setCredentialInCache(providerId, next);
+    await this.persist();
+    return next;
+  }
+
+  async delete(providerId: string): Promise<void> {
+    await this.load();
+    const oauth = { ...(this.cache.oauth ?? {}) };
+    const apiKeys = { ...(this.cache.apiKeys ?? {}) };
+    delete oauth[providerId];
+    delete apiKeys[providerId];
+    this.cache = { ...this.cache, oauth, apiKeys };
+    await this.persist();
+  }
+
+  private getCredentialFromCache(providerId: string): Credential | undefined {
+    const oauth = this.cache.oauth?.[providerId];
+    if (oauth) return { ...oauth, type: "oauth" } satisfies OAuthCredential;
+    const key = this.cache.apiKeys?.[providerId];
+    if (key) return { type: "api_key", key } satisfies ApiKeyCredential;
+    return undefined;
+  }
+
+  private setCredentialInCache(providerId: string, credential: Credential): void {
+    const oauth = { ...(this.cache.oauth ?? {}) };
+    const apiKeys = { ...(this.cache.apiKeys ?? {}) };
+    if (credential.type === "oauth") {
+      const { type: _type, ...stored } = credential;
+      oauth[providerId] = stored;
+      delete apiKeys[providerId];
+    } else {
+      if (credential.key) apiKeys[providerId] = credential.key;
+      else delete apiKeys[providerId];
+      delete oauth[providerId];
+    }
+    this.cache = { ...this.cache, oauth, apiKeys };
   }
 
   private async persist(): Promise<void> {

@@ -44,9 +44,9 @@
   },
   "dependencies": {
     "@chiwanpark/pi-squared-protocol": "workspace:*",
-    "@earendil-works/pi-agent-core": "^0.76.0",
-    "@earendil-works/pi-ai": "^0.76.0",
-    "@earendil-works/pi-tui": "^0.76.0",
+    "@earendil-works/pi-agent-core": "^0.80.3",
+    "@earendil-works/pi-ai": "^0.80.3",
+    "@earendil-works/pi-tui": "^0.80.3",
     "@tsports/go-osc52": "2.0.14-tsport",
     "typebox": "1.1.39"
   },
