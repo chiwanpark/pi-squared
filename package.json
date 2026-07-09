@@ -26,6 +26,7 @@
     "typescript-eslint": "^8.60.0"
   },
   "dependencies": {
+    "@chiwanpark/pi-squared": "link:",
     "@chiwanpark/pi-squared-agent": "link:agent"
   }
 }

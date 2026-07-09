@@ -39,7 +39,7 @@
     "format:check": "pnpm --workspace-root format:check"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.80.3"
+    "@earendil-works/pi-agent-core": "^0.80.6"
   },
   "devDependencies": {
     "@types/node": "24.12.4",

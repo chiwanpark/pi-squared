@@ -6,5 +6,9 @@ allowBuilds:
   "@google/genai": true
   esbuild: true
   protobufjs: true
+minimumReleaseAgeExclude:
+  - '@earendil-works/pi-agent-core@0.80.6'
+  - '@earendil-works/pi-ai@0.80.6'
+  - '@earendil-works/pi-tui@0.80.6'
 overrides:
   '@chiwanpark/pi-squared-agent': link:agent
