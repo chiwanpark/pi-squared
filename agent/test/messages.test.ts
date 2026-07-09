@@ -34,4 +34,23 @@ describe("message rendering helpers", () => {
       "before\nafter",
     );
   });
+
+  it("replaces empty reasoning placeholders from providers", () => {
+    const message = {
+      role: "assistant",
+      content: [
+        {
+          type: "thinking",
+          thinking: "**Checking the issue**\n\n<!-- -->",
+        },
+        { type: "text", text: "Done." },
+      ],
+      timestamp: Date.now(),
+    } as unknown as AgentMessage;
+
+    expect(messageToMarkdownBlocks(message)).toEqual([
+      { kind: "thinking", text: "**Checking the issue**\n\n[reasoning content not provided]" },
+      { kind: "message", text: "Done." },
+    ]);
+  });
 });

@@ -11,15 +11,19 @@ function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
 }
 
+const MISSING_REASONING_PLACEHOLDER = "[reasoning content not provided]";
+
 function contentBlockToText(block: unknown, options?: { includeThinkingTags?: boolean }): string {
   if (!isRecord(block)) return "";
 
   switch (block.type) {
     case "text":
       return typeof block.text === "string" ? block.text : "";
-    case "thinking":
+    case "thinking": {
       if (typeof block.thinking !== "string") return "";
-      return options?.includeThinkingTags ? `<thinking>\n${block.thinking}\n</thinking>` : block.thinking;
+      const thinking = formatThinkingText(block.thinking);
+      return options?.includeThinkingTags ? `<thinking>\n${thinking}\n</thinking>` : thinking;
+    }
     case "image":
       return typeof block.mimeType === "string" ? `[image: ${block.mimeType}]` : "[image]";
     case "toolCall":
@@ -27,6 +31,10 @@ function contentBlockToText(block: unknown, options?: { includeThinkingTags?: bo
     default:
       return "";
   }
+}
+
+function formatThinkingText(text: string): string {
+  return text.replace(/^[ \t]*<!--[ \t]*-->[ \t]*$/gm, MISSING_REASONING_PLACEHOLDER);
 }
 
 export function createUserMessage(text: string): AgentMessage {
