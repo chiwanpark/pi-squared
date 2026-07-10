@@ -21,6 +21,10 @@ coverage/
 # pi-squared server
 sessions/
 
+# pi-squared server UI
+server-ui/.svelte-kit/
+server-ui/build/
+
 # IDE
 .idea/
 .vscode/

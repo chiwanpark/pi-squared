@@ -2,6 +2,7 @@ packages:
   - "agent"
   - "protocol"
   - "server"
+  - "server-ui"
 allowBuilds:
   "@google/genai": true
   esbuild: true

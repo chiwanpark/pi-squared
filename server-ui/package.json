@@ -1,0 +1,47 @@
+{
+  "name": "@chiwanpark/pi-squared-server-ui",
+  "version": "0.3.0",
+  "description": "Administration UI for the pi-squared server.",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chiwanpark/pi-squared.git",
+    "directory": "server-ui"
+  },
+  "bugs": {
+    "url": "https://github.com/chiwanpark/pi-squared/issues"
+  },
+  "homepage": "https://github.com/chiwanpark/pi-squared#readme",
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "svelte-kit sync && vite build",
+    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck:test": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "svelte-kit sync && vitest run --passWithNoTests",
+    "test:watch": "svelte-kit sync && vitest --passWithNoTests",
+    "start": "node build",
+    "dev": "vite dev",
+    "preview": "vite preview",
+    "lint": "pnpm --workspace-root lint",
+    "lint:fix": "pnpm --workspace-root lint:fix",
+    "format": "pnpm --workspace-root format",
+    "format:check": "pnpm --workspace-root format:check"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-node": "^5.5.7",
+    "@sveltejs/kit": "^2.69.2",
+    "@types/node": "24.12.4",
+    "svelte": "^5.56.4",
+    "svelte-check": "^4.7.2",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.7"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
