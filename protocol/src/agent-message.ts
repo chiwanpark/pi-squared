@@ -1,20 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { isFiniteNumber, isRecord, isString, type UnknownRecord } from "./validation.js";
 
 const STOP_REASONS = new Set(["stop", "length", "toolUse", "error", "aborted"]);
-
-type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string";
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
 
 function isOptionalString(value: unknown): boolean {
   return value === undefined || isString(value);

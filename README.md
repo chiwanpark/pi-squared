@@ -1,6 +1,17 @@
 # pi-squared
 
-Yet another pi-based coding agent
+Yet another pi-based coding agent.
+
+## Architecture
+
+pi-squared is being split into four components:
+
+- **Server** manages multiple executors and clients, stores configuration, and records messages.
+- **Executor** calls LLMs, runs tool calls, and reports messages and status to the server.
+- **Client** sends user requests to the server and presents the resulting output.
+- **Protocol** provides the shared types and runtime validators used by the other components.
+
+See [`protocol/README.md`](protocol/README.md) for protocol definitions and JSON examples.
 
 ## Development
 
